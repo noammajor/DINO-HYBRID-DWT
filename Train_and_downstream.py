@@ -2070,6 +2070,30 @@ def _patch_timedart_get_data(exp):
     exp._get_data = types.MethodType(_get_data, exp)
 
 
+class _FlatWindowAdapterTM(torch.utils.data.Dataset):
+    """
+    Like _FlatWindowAdapter but produces zero time marks of the correct shape
+    for TimeMixer's DataEmbedding_wo_pos (timeF encoding needs mark_dim features).
+    Returns (seq_x, seq_y, xmark, ymark) where marks are zeros of shape [T, mark_dim].
+    """
+    _FREQ_DIM = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
+
+    def __init__(self, patched_ds, freq: str = 'h'):
+        self._ds = patched_ds
+        self._mark_dim = self._FREQ_DIM.get(freq, 4)
+
+    def __len__(self):
+        return len(self._ds)
+
+    def __getitem__(self, idx):
+        ctx, tgt = self._ds[idx]
+        seq_x = ctx.reshape(-1, ctx.shape[-1])   # [seq_len, C]
+        seq_y = tgt.reshape(-1, tgt.shape[-1])   # [pred_len, C]
+        xmark = torch.zeros(seq_x.shape[0], self._mark_dim)
+        ymark = torch.zeros(seq_y.shape[0], self._mark_dim)
+        return seq_x, seq_y, xmark, ymark
+
+
 def run_timedart(skip_train: bool = False,
                  pretrain_dataset: str = None,
                  forecast_dataset: str = None,
@@ -2764,6 +2788,437 @@ def run_softclt(
     return "best", best_mse, cls_acc, anom_result
 
 
+# ── TimeMixer ─────────────────────────────────────────────────────────────────
+
+def run_timemixer(skip_train: bool = False,
+                  pretrain_dataset: str = None,
+                  forecast_dataset: str = None,
+                  classification_dataset: str = None,
+                  anomaly_dataset: str = None,
+                  pretrain_only: bool = False,
+                  pred_lens=None,
+                  encoder_layers: int = None,
+                  lr: float = None,
+                  linear_probe: bool = True,
+                  head_type: str = "linear",
+                  embed_dim: int = None,
+                  epochs: int = None,
+                  epochs_forecasting: int = None,
+                  pretrain_source: str = None):
+    """
+    TimeMixer: supervised multi-scale mixing model.
+    No pretraining — trains directly on each downstream task.
+    Uses PatchTSTForcastingAdapter for forecasting (same splits as all other models).
+    """
+    if pred_lens is None:
+        pred_lens = [96, 192, 336, 720]
+
+    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    shared_dir    = Path(__file__).parent / "shared"
+    _add_path(shared_dir)
+
+    # Put timemixer_dir first so its exp/models packages take priority.
+    import sys as _sys, importlib.util as _ilu, torch
+    from types import SimpleNamespace
+
+    _tm_str = str(timemixer_dir)
+    if _tm_str not in _sys.path:
+        _sys.path.insert(0, _tm_str)
+    # Evict any cached exp/models modules from other models so timemixer's win.
+    for _key in list(_sys.modules.keys()):
+        if _key in ('exp', 'models') or _key.startswith('exp.') or _key.startswith('models.'):
+            _sys.modules.pop(_key, None)
+
+    # ── load config ────────────────────────────────────────────────────────────
+    _spec = _ilu.spec_from_file_location("config_timemixer", timemixer_dir / "config_timemixer.py")
+    _mod  = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    cfg = {**DATA_PATHS, **dict(_mod.config)}
+
+    if encoder_layers is not None:
+        cfg['e_layers'] = encoder_layers
+    if embed_dim is not None:
+        cfg['d_model'] = embed_dim
+        cfg['d_ff']    = embed_dim * 2
+    if lr is not None:
+        cfg['learning_rate'] = lr
+
+    _gpu_idx = 0
+    _device  = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    seq_len   = cfg['seq_len']
+    patch_len = cfg.get('patch_len', 16)
+    freq      = cfg.get('freq', 'h')
+
+    print("\n" + "="*60)
+    print(f"  MODEL: TimeMixer  (supervised, no pretraining)")
+    print(f"  forecast: {forecast_dataset or '(none)'}  cls: {classification_dataset or '(none)'}")
+    print(f"  e_layers={cfg['e_layers']}  d_model={cfg['d_model']}  seq_len={seq_len}")
+    print("="*60)
+
+    if pretrain_only:
+        print("[TimeMixer] pretrain_only=True — TimeMixer has no pretraining phase, skipping.")
+        return
+
+    # base args for Exp_Long_Term_Forecast
+    base_args = SimpleNamespace(
+        model                       = 'TimeMixer',
+        task_name                   = 'long_term_forecast',
+        use_gpu                     = torch.cuda.is_available(),
+        gpu                         = _gpu_idx,
+        use_multi_gpu               = False,
+        devices                     = str(_gpu_idx),
+        device_ids                  = [_gpu_idx],
+        seq_len                     = seq_len,
+        label_len                   = cfg.get('label_len', 0),
+        pred_len                    = 96,
+        enc_in                      = 1,
+        dec_in                      = 1,
+        c_out                       = 1,
+        d_model                     = cfg['d_model'],
+        n_heads                     = cfg['n_heads'],
+        e_layers                    = cfg['e_layers'],
+        d_layers                    = cfg.get('d_layers', 1),
+        d_ff                        = cfg['d_ff'],
+        dropout                     = cfg['dropout'],
+        embed                       = freq,      # DataEmbedding_wo_pos uses embed= for mode
+        freq                        = freq,
+        factor                      = cfg.get('factor', 1),
+        moving_avg                  = cfg.get('moving_avg', 25),
+        channel_independence        = cfg.get('channel_independence', 1),
+        decomp_method               = cfg.get('decomp_method', 'moving_avg'),
+        use_norm                    = cfg.get('use_norm', 1),
+        down_sampling_layers        = cfg.get('down_sampling_layers', 3),
+        down_sampling_window        = cfg.get('down_sampling_window', 2),
+        down_sampling_method        = cfg.get('down_sampling_method', 'avg'),
+        use_future_temporal_feature = cfg.get('use_future_temporal_feature', 0),
+        top_k                       = cfg.get('top_k', 5),
+        num_kernels                 = cfg.get('num_kernels', 6),
+        features                    = cfg.get('features', 'M'),
+        output_attention            = False,
+        data                        = 'custom',
+        root_path                   = '/tmp',
+        data_path                   = 'data.csv',
+        inverse                     = False,
+        checkpoints                 = str(Path(__file__).parent / 'outputs' / 'timemixer_forecast'),
+        num_workers                 = cfg.get('num_workers', 4),
+        train_epochs                = epochs if epochs is not None else cfg.get('train_epochs', 10),
+        batch_size                  = cfg.get('batch_size', 16),
+        learning_rate               = cfg['learning_rate'],
+        patience                    = cfg.get('patience', 5),
+        lradj                       = cfg.get('lradj', 'TST'),
+        pct_start                   = cfg.get('pct_start', 0.2),
+        loss                        = cfg.get('loss', 'MSE'),
+        drop_last                   = cfg.get('drop_last', True),
+        use_amp                     = False,
+    )
+
+    # TimeMixer's embed arg is the string name like 'timeF'; the DataEmbedding_wo_pos
+    # constructor takes embed_type as its own arg. Keep the alias consistent.
+    base_args.embed = cfg.get('embed', 'timeF')
+
+    # ── forecasting downstream ─────────────────────────────────────────────────
+    best_mse, best_mae, best_pred = float('inf'), float('inf'), None
+
+    if forecast_dataset is not None:
+        from data_loaders.data_puller import PatchTSTForcastingAdapter
+        from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
+        import types as _types, numpy as _np
+
+        ds_info  = get_dataset_info(forecast_dataset)
+        _csv     = ds_info["csv_path"]
+        _c_in    = ds_info["c_in"]
+        _fc_bs   = _get_forecast_bs(cfg, 128)
+        _fc_nw   = cfg.get('num_workers', 4)
+        _n_epochs_fc = (epochs_forecasting if epochs_forecasting is not None
+                        else epochs if epochs is not None
+                        else cfg.get('epochs_forecasting', 10))
+
+        for pred_len in pred_lens:
+            def _fc_loader(split, _pl=pred_len):
+                ds = _FlatWindowAdapterTM(
+                    PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
+                    freq=freq)
+                return torch.utils.data.DataLoader(
+                    ds, batch_size=_fc_bs, shuffle=(split == 'train'),
+                    num_workers=_fc_nw, drop_last=True)
+
+            ft_args = SimpleNamespace(**vars(base_args))
+            ft_args.pred_len      = pred_len
+            ft_args.enc_in        = _c_in
+            ft_args.dec_in        = _c_in
+            ft_args.c_out         = _c_in
+            ft_args.train_epochs  = _n_epochs_fc
+            ft_args.learning_rate = _get_forecast_lr(cfg, 'lr_forecasting', 5e-4)
+            ft_args.batch_size    = _fc_bs
+
+            setting = (f"timemixer_{forecast_dataset}_pl{pred_len}"
+                       f"_dm{cfg['d_model']}_el{cfg['e_layers']}")
+
+            print(f"\n[TimeMixer] Forecasting pred_len={pred_len} on {forecast_dataset} …")
+
+            _tm_train = _fc_loader('train')
+            _tm_val   = _fc_loader('val')
+            _tm_test  = _fc_loader('test')
+
+            exp = Exp_Long_Term_Forecast(ft_args)
+
+            def _get_data(self, flag):
+                loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
+                return loader.dataset, loader
+            exp._get_data = _types.MethodType(_get_data, exp)
+
+            if not skip_train:
+                exp.train(setting)
+
+            # ── evaluate ──────────────────────────────────────────────────────
+            exp.model.eval()
+            preds_list, trues_list = [], []
+            _fdev = exp.device
+            with torch.no_grad():
+                for batch_x, batch_y, batch_x_mark, batch_y_mark in _tm_test:
+                    batch_x      = batch_x.float().to(_fdev)
+                    batch_y      = batch_y.float().to(_fdev)
+                    batch_x_mark = batch_x_mark.float().to(_fdev)
+                    batch_y_mark = batch_y_mark.float().to(_fdev)
+                    # down_sampling_layers > 0 → no decoder input needed
+                    dec_inp  = None if ft_args.down_sampling_layers > 0 else (
+                        torch.zeros_like(batch_y[:, -pred_len:, :]).float().to(_fdev))
+                    outputs  = exp.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    f_dim    = -1 if ft_args.features == 'MS' else 0
+                    outputs  = outputs[:, -pred_len:, f_dim:]
+                    batch_y  = batch_y[:, -pred_len:, f_dim:]
+                    preds_list.append(outputs.detach().cpu().numpy())
+                    trues_list.append(batch_y.detach().cpu().numpy())
+            exp.model.train()
+
+            preds_arr = _np.concatenate(preds_list, axis=0)
+            trues_arr = _np.concatenate(trues_list, axis=0)
+            mse = float(_np.mean((preds_arr - trues_arr) ** 2))
+            mae = float(_np.mean(_np.abs(preds_arr - trues_arr)))
+            print(f"  [TimeMixer] pred_len={pred_len} → test MSE={mse:.4f}  MAE={mae:.4f}")
+
+            if mse < best_mse:
+                best_mse  = mse
+                best_mae  = mae
+                best_pred = pred_len
+
+    # ── classification downstream ──────────────────────────────────────────────
+    cls_acc = None
+    if classification_dataset is not None:
+        from data_loaders.data_puller import ClassificationDataPuller, make_uea_dataloaders
+        from models import TimeMixer as _TM
+        import torch.nn as _nn
+        import numpy as _np
+
+        cls_dir = cfg["classification_data_dir"]
+        cls_bs  = _get_cls_bs(cfg, "batch_size_classification", 64)
+        p_s     = patch_len
+
+        # Determine if UEA .ts format or our npy/pt format
+        _cls_path = Path(cls_dir) / classification_dataset
+        _is_uea   = bool(list(_cls_path.glob("*_TRAIN.ts"))) if _cls_path.exists() else False
+
+        if _is_uea:
+            _raw_train, _, _raw_test, n_classes = make_uea_dataloaders(
+                cls_dir, classification_dataset, batch_size=cls_bs)
+            # Extract underlying datasets and rebuild with patch collation
+            _ds_train = _raw_train.dataset
+            _ds_test  = _raw_test.dataset
+            n_vars   = _ds_train._samples[0].shape[-1]
+            _max_T   = max(s.shape[0] for s in _ds_train._samples + _ds_test._samples)
+            _seq_len = int(_np.ceil(_max_T / p_s)) * p_s
+
+            def _uea_collate(batch):
+                import torch.nn.functional as F
+                xs, ys, orig_lens = zip(*batch)
+                orig_lens = torch.stack(orig_lens)
+                max_t = max(x.shape[0] for x in xs)
+                xs = torch.stack([F.pad(x, (0, 0, 0, max_t - x.shape[0])) for x in xs])
+                T = xs.shape[1]
+                if T < _seq_len:
+                    xs = torch.cat([xs, torch.zeros(xs.shape[0], _seq_len - T, xs.shape[2])], dim=1)
+                elif T > _seq_len:
+                    xs = xs[:, :_seq_len, :]
+                # padding mask at timestep level: True = real data
+                ts_mask = torch.arange(_seq_len).unsqueeze(0) < orig_lens.unsqueeze(1)
+                return xs, torch.stack(ys), ts_mask.float()
+
+            cls_train = torch.utils.data.DataLoader(
+                _ds_train, batch_size=cls_bs, shuffle=True,  collate_fn=_uea_collate)
+            cls_test  = torch.utils.data.DataLoader(
+                _ds_test,  batch_size=cls_bs, shuffle=False, collate_fn=_uea_collate)
+        else:
+            def _mk(split):
+                ds = ClassificationDataPuller(cls_dir, classification_dataset, p_s, which=split)
+                return torch.utils.data.DataLoader(ds, batch_size=cls_bs, shuffle=(split == "train"))
+            cls_train = _mk("train")
+            cls_test  = _mk("test")
+            n_classes = cls_train.dataset.n_classes
+            n_vars    = cls_train.dataset.X.shape[2]
+            _seq_len  = cls_train.dataset.X.shape[1]
+
+        # Build TimeMixer for classification (channel_independence=0, no downsampling)
+        cls_args = SimpleNamespace(**vars(base_args))
+        cls_args.task_name          = 'classification'
+        cls_args.seq_len            = _seq_len
+        cls_args.pred_len           = 0
+        cls_args.enc_in             = n_vars
+        cls_args.dec_in             = n_vars
+        cls_args.c_out              = n_vars
+        cls_args.num_class          = n_classes
+        cls_args.channel_independence = 0   # multivariate mode required for classification
+        cls_args.down_sampling_layers = 0   # no downsampling — seq_len varies per dataset
+
+        cls_model = _TM.Model(cls_args).float().to(_device)
+        cls_optim = torch.optim.Adam(cls_model.parameters(),
+                                     lr=cfg.get('lr_classification', 1e-3))
+        cls_crit  = _nn.CrossEntropyLoss()
+        n_epochs_cls = cfg.get('epochs_classification', 30)
+        patience_cls = cfg.get('patience_classification', 5)
+        best_acc, no_improve = 0.0, 0
+
+        print(f"\n[TimeMixer] Classification on {classification_dataset} "
+              f"({n_classes} classes, {n_vars} vars, seq={_seq_len}) …")
+
+        for epoch in range(n_epochs_cls):
+            cls_model.train()
+            for batch in cls_train:
+                if _is_uea:
+                    bx, by, bmask = batch
+                    bx = bx.float().to(_device)
+                else:
+                    # ClassificationDataPuller: (patches, y, padding_mask)
+                    patches, by, pmask = batch
+                    bx    = patches.reshape(patches.shape[0], -1, patches.shape[-1]).float().to(_device)
+                    # expand patch-level mask to timestep-level
+                    bmask = pmask.float().repeat_interleave(p_s, dim=1).to(_device)
+                by = by.long().to(_device)
+                bmask = bmask.to(_device)
+
+                logits = cls_model(bx, bmask, None, None)
+                # cls_model returns [B, num_class]
+                loss = cls_crit(logits, by)
+                cls_optim.zero_grad()
+                loss.backward()
+                _nn.utils.clip_grad_norm_(cls_model.parameters(), max_norm=4.0)
+                cls_optim.step()
+
+            # ── validation on test set ────────────────────────────────────────
+            cls_model.eval()
+            all_preds, all_true = [], []
+            with torch.no_grad():
+                for batch in cls_test:
+                    if _is_uea:
+                        bx, by, bmask = batch
+                        bx = bx.float().to(_device)
+                    else:
+                        patches, by, pmask = batch
+                        bx    = patches.reshape(patches.shape[0], -1, patches.shape[-1]).float().to(_device)
+                        bmask = pmask.float().repeat_interleave(p_s, dim=1).to(_device)
+                    by = by.long().to(_device)
+                    bmask = bmask.to(_device)
+                    logits = cls_model(bx, bmask, None, None)
+                    all_preds.append(logits.argmax(dim=-1).cpu())
+                    all_true.append(by.cpu())
+            acc = (torch.cat(all_preds) == torch.cat(all_true)).float().mean().item()
+            print(f"  Epoch {epoch+1}/{n_epochs_cls}  test acc={acc:.4f}")
+            if acc > best_acc:
+                best_acc  = acc
+                no_improve = 0
+            else:
+                no_improve += 1
+                if no_improve >= patience_cls:
+                    print("  Early stopping.")
+                    break
+
+        cls_acc = best_acc
+        print(f"\n{'='*60}")
+        print(f"  [TimeMixer] Classification on {classification_dataset}")
+        print(f"  Test Accuracy: {cls_acc:.4f}")
+        print(f"{'='*60}")
+
+    # ── anomaly detection downstream ───────────────────────────────────────────
+    anom_result = None
+    if anomaly_dataset is not None:
+        from data_loaders.data_puller import AnomalyDataPuller
+        from models import TimeMixer as _TM
+        import torch.nn as _nn
+        import numpy as _np
+        from sklearn.metrics import f1_score
+
+        anom_dir = cfg["anomaly_data_dir"]
+        anom_bs  = cfg.get('batch_size', 64)
+
+        anom_train_ds = AnomalyDataPuller(anom_dir, anomaly_dataset, patch_len, which="train")
+        anom_test_ds  = AnomalyDataPuller(anom_dir, anomaly_dataset, patch_len, which="test")
+        _anom_seq     = anom_train_ds.padded_T
+        _anom_vars    = anom_train_ds.n_vars
+
+        anom_train_loader = torch.utils.data.DataLoader(
+            anom_train_ds, batch_size=anom_bs, shuffle=False, drop_last=False)
+        anom_test_loader  = torch.utils.data.DataLoader(
+            anom_test_ds,  batch_size=anom_bs, shuffle=False, drop_last=False)
+
+        # Build TimeMixer for anomaly detection (reconstruction objective)
+        an_args = SimpleNamespace(**vars(base_args))
+        an_args.task_name           = 'anomaly_detection'
+        an_args.seq_len             = _anom_seq
+        an_args.pred_len            = 0
+        an_args.enc_in              = _anom_vars
+        an_args.dec_in              = _anom_vars
+        an_args.c_out               = _anom_vars
+        an_args.channel_independence = 0
+        an_args.down_sampling_layers = 0
+
+        an_model = _TM.Model(an_args).float().to(_device)
+        an_optim = torch.optim.Adam(an_model.parameters(), lr=cfg.get('learning_rate', 1e-3))
+        an_crit  = _nn.MSELoss()
+        n_epochs_an = cfg.get('train_epochs', 10)
+
+        print(f"\n[TimeMixer] Anomaly detection on {anomaly_dataset} "
+              f"({_anom_vars} vars, win={_anom_seq}) …")
+
+        if not skip_train:
+            for epoch in range(n_epochs_an):
+                an_model.train()
+                ep_loss = []
+                for batch in anom_train_loader:
+                    patches = batch[0].float().to(_device)   # [B, n_patches, patch_len, C]
+                    bx = patches.reshape(patches.shape[0], -1, patches.shape[-1])  # [B, T, C]
+                    recon = an_model(bx, None, None, None)
+                    loss  = an_crit(recon, bx)
+                    an_optim.zero_grad()
+                    loss.backward()
+                    an_optim.step()
+                    ep_loss.append(loss.item())
+                print(f"  Epoch {epoch+1}/{n_epochs_an} loss={_np.mean(ep_loss):.4f}")
+
+        # ── compute anomaly scores (reconstruction error per timestep) ─────────
+        an_model.eval()
+        scores_list, labels_list = [], []
+        with torch.no_grad():
+            for batch in anom_test_loader:
+                patches, lbls = batch[0].float().to(_device), batch[1]
+                bx    = patches.reshape(patches.shape[0], -1, patches.shape[-1])
+                recon = an_model(bx, None, None, None)
+                err   = ((recon - bx) ** 2).mean(dim=-1)   # [B, T]
+                scores_list.append(err.cpu().numpy())
+                labels_list.append(lbls.numpy())
+
+        scores = _np.concatenate(scores_list, axis=0).reshape(-1)  # per-timestep MSE
+        labels = _np.concatenate(labels_list, axis=0).reshape(-1)
+
+        _ratio = _get_anomaly_ratio(anomaly_dataset, cfg)
+        thresh = _np.percentile(scores, 100 - _ratio)
+        preds  = (scores > thresh).astype(int)
+        f1    = f1_score(labels, preds, zero_division=0)
+        print(f"  [TimeMixer] Anomaly {anomaly_dataset} → F1={f1:.4f} (thresh={thresh:.4f})")
+        anom_result = f1
+
+    return best_pred, best_mse, best_mae, cls_acc, anom_result
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 RUNNERS = {
@@ -2778,6 +3233,7 @@ RUNNERS = {
     "random":          run_random,
     "timedart":        run_timedart,
     "softclt":         run_softclt,
+    "timemixer":       run_timemixer,
 }
 
 def run(model: str,

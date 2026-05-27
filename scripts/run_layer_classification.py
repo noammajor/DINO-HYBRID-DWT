@@ -66,6 +66,7 @@ MODEL_GPU = {
     "patchtst_random":    5,
     "timedart":           6,
     "softclt":            7,
+    "timemixer":          7,
 }
 ALL_MODELS = list(MODEL_GPU.keys())
 

@@ -335,6 +335,14 @@ def train_TS_DINO(args):
             args,
             student_recon=student_recon,
             teacher_recon_decoder=teacher_recon_decoder,
+            use_mlm=use_mlm,
+            mlm_mode=mlm_mode,
+            mlm_phi=mlm_phi,
+            mlm_mask_ratio=mlm_mask_ratio,
+            student_ibot_head=student_ibot_head,
+            teacher_ibot_head=teacher_ibot_head,
+            ibot_center=ibot_center,
+            student_mae_head=student_mae_head,
         )
         save_dict = {
             'student': student.state_dict(),
@@ -383,7 +391,7 @@ def train_TS_DINO(args):
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
-def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader, optimizer, epoch, fp16_scaler, lr_schedule, wd_schedule, momentum_schedule, args, student_recon=None, teacher_recon_decoder=None):
+def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader, optimizer, epoch, fp16_scaler, lr_schedule, wd_schedule, momentum_schedule, args, student_recon=None, teacher_recon_decoder=None, use_mlm=False, mlm_mode="ibot", mlm_phi=0.0, mlm_mask_ratio=0.4, student_ibot_head=None, teacher_ibot_head=None, ibot_center=None, student_mae_head=None):
     student_without_ddp = student.module if hasattr(student, 'module') else student
     student.train()
     teacher.train()  # teacher is in eval mode but we need to keep track of BN stats
@@ -467,7 +475,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                                       min(epoch, len(dino_loss.teacher_temp_schedule)-1)]
                         _t_soft = F.softmax((_t_ibot - ibot_center) / _ttemp, dim=-1).detach()
                         _s_log  = F.log_softmax(_s_ibot / 0.1, dim=-1)
-                        _mlm_loss = -(t_soft * _s_log).sum(dim=-1).mean()
+                        _mlm_loss = -(_t_soft * _s_log).sum(dim=-1).mean()
                         with torch.no_grad():
                             ibot_center.mul_(0.9).add_(_t_ibot.mean(0, keepdim=True) * 0.1)
                         metric_logger.update(ibot_loss=_mlm_loss.item())

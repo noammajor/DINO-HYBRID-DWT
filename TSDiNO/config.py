@@ -148,7 +148,7 @@ config = {
     # Teacher encoder sees full input    → reconstruction head.
     # Loss: MSE between the two reconstructions at masked positions.
     "use_reconstruction": False,   # set True to enable
-    "mlm_phi":        0.0,         # phi*DINO + (1-phi)*MLM  (0 = pure DINO)
+    "mlm_phi":        0.0,         # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
     "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground truth
     "ibot_out_dim":   65536,       # iBOT patch head output dim (default: same as out_dim)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM

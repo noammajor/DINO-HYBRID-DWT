@@ -55,6 +55,7 @@ MODEL_GPU = {
     "patchtst_random": 5,
     "timedart":        6,
     "softclt":         1,
+    "timemixer":       7,
 }
 
 ALL_MODELS = list(MODEL_GPU.keys())
@@ -165,6 +166,10 @@ def discover_checkpoints(model: str, encoder_layers: int,
         # SoftCLT saves checkpoint_best.pth — no per-epoch tournament search
         return ["best"]
 
+    elif model == "timemixer":
+        # TimeMixer is supervised (no pretraining) — trains fresh each eval call
+        return ["best"]
+
     return [None]
 
 
@@ -259,6 +264,21 @@ def eval_checkpoint(model: str, dataset: str, pred_len: int, ckpt,
                     encoder_layers=encoder_layers,
                     gpu=gpu,
                     pretrain_source=pretrain_source,
+                    linear_probe=linear_probe,
+                    head_type=head_type,
+                )
+                if isinstance(result, tuple) and len(result) >= 3:
+                    return (result[1], result[2])
+                return (result[1], None) if isinstance(result, tuple) else None
+
+            elif model == "timemixer":
+                # TimeMixer trains supervised from scratch — always skip_train=False
+                result = run(
+                    model="timemixer",
+                    skip_train=False,
+                    forecast_dataset=dataset,
+                    pred_lens=[pred_len],
+                    encoder_layers=encoder_layers,
                     linear_probe=linear_probe,
                     head_type=head_type,
                 )
@@ -391,6 +411,13 @@ def eval_best(model: str, dataset: str, pred_len: int,
                              pretrain_source=pretrain_source,
                              linear_probe=linear_probe,
                              head_type=head_type)
+                if isinstance(result, tuple) and len(result) >= 3:
+                    return (result[1], result[2])
+                return (result[1], None) if isinstance(result, tuple) else None
+            elif model == "timemixer":
+                result = run(model="timemixer", skip_train=False, forecast_dataset=dataset,
+                             pred_lens=[pred_len], encoder_layers=encoder_layers,
+                             linear_probe=linear_probe, head_type=head_type)
                 if isinstance(result, tuple) and len(result) >= 3:
                     return (result[1], result[2])
                 return (result[1], None) if isinstance(result, tuple) else None
