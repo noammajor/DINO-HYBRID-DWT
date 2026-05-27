@@ -79,7 +79,7 @@ config = {
     #   finest_levels         – how many of the finest detail levels to perturb (1 = only finest).
     #   high_perturb_noise_range – (min_σ, max_σ) of Gaussian noise added to all detail coeffs.
     #
-    "dwt_wavelet":                  "db4",          # try: "haar", "db4", "sym4", "coif2"
+    "dwt_wavelet":                  "sym4",         # sym4 preferred for SWT/MODWT (near-linear phase); try: "haar", "db4", "sym4", "coif2"
     "dwt_level":                    3,              # try: 2, 3, 4
     "dwt_soft_threshold_sigma":     0.3,            # try: 0.1, 0.3, 0.5
     "dwt_zero_out_ratio":           0.4,            # bumped: 0.3 → 0.4
@@ -153,12 +153,12 @@ config = {
 
     # ── Teacher view (global crop) ────────────────────────────────────────────
     "global_crops": [
-        {"type": "dwt_soft_threshold", "crop_ratio": 1.0},
+        {"type": "swt_soft", "crop_ratio": 1.0},
     ],
 
     # ── Student view (local crop) ─────────────────────────────────────────────
     "local_crops": [
-        {"type": "dwt_high_perturb", "crop_ratio": 1.0},
+        {"type": "swt_hard", "crop_ratio": 1.0},
     ],
 
     # ── Patch reconstruction (MAE-style auxiliary loss) ────────────────────────
