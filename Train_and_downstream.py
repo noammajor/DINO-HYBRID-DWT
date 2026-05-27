@@ -232,7 +232,8 @@ def run_dino(skip_train: bool = False,
              aug_global: str = None,
              aug_local: str = None,
              mlm_phi: float = None,
-             mlm_mode: str = None):
+             mlm_mode: str = None,
+             backbone_type: str = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
     _add_path(dino_dir)
@@ -304,6 +305,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_phi'] = mlm_phi
     if mlm_mode is not None:
         dino_cfg['mlm_mode'] = mlm_mode
+    if backbone_type is not None:
+        dino_cfg['backbone_type'] = backbone_type
     if seed is not None:
         dino_cfg['seed'] = seed
     pretrain_source = _resolve_pretrain_source(dino_cfg)
@@ -3275,6 +3278,7 @@ def run(model: str,
         aug_local: str = None,
         mlm_phi: float = None,
         mlm_mode: str = None,
+        backbone_type: str = None,
         phi: float = None):
     """
     Unified entry point. Each run handles ONE task.
@@ -3372,6 +3376,7 @@ def run(model: str,
     if 'aug_local'             in sig.parameters: kwargs['aug_local']             = aug_local
     if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
+    if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     return runner(**kwargs)
 
@@ -3460,6 +3465,8 @@ if __name__ == "__main__":
                         help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
     parser.add_argument("--mlm_mode",   type=str,   default=None,
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
+    parser.add_argument("--backbone_type", type=str, default=None,
+                        help="patchtst | tsmixer — overrides config (default: patchtst)")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -3487,6 +3494,7 @@ if __name__ == "__main__":
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
         mlm_mode=args.mlm_mode,
+        backbone_type=args.backbone_type,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",

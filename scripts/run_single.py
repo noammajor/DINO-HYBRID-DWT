@@ -139,6 +139,8 @@ def main():
                         help="MLM weight: phi*DINO+(1-phi)*MLM (DINO only)")
     parser.add_argument("--mlm_mode",   type=str,   default=None,
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
+    parser.add_argument("--backbone_type", type=str, default=None,
+                        help="patchtst | tsmixer — overrides config (default: patchtst)")
     parser.add_argument("--lr_pred",  type=float, default=None,
                         help="Predictor LR (JEPA only)")
     parser.add_argument("--gpu",      type=int, default=0,
@@ -211,6 +213,8 @@ def main():
         base_cmd += ["--mlm_mode", args.mlm_mode]
     if args.phi is not None:
         base_cmd += ["--phi", str(args.phi)]
+    if args.backbone_type is not None:
+        base_cmd += ["--backbone_type", args.backbone_type]
 
     # ── pretrain ──────────────────────────────────────────────────────────────
     if not args.skip_pretrain:
