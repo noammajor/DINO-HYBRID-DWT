@@ -105,6 +105,12 @@ class TSMixerForDINO(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         trunc_normal_(self.mask_token, std=0.02)
 
+        # Learnable CLS token — prepended to the finest-scale sequence before PDM.
+        # It acts as a global summary (like ViT CLS) and is used as the DINO representation
+        # instead of mean-pooling, which loses discriminative signal after RevIN.
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        trunc_normal_(self.cls_token, std=0.02)
+
         # Timestep-level tokens: each of the T positions in enc_out_list[0] is a token.
         self.num_tokens = seq_len
 
@@ -186,13 +192,21 @@ class TSMixerForDINO(nn.Module):
         """Global DINO embedding.
 
         x: [B, T, C]
-        returns: [B, C, d_model]  — mean-pooled over time per variable.
+        returns: [B, C, d_model]  — CLS-attention-pooled over time per variable.
                   TSMultiCropWrapper reshapes this to [B*C, d_model] before DINOHead.
         """
         B = x.shape[0]
         enc = self._embed_and_mix(self._multi_scale_process(x))
-        # enc[0]: [B*C, T, d_model]  → mean-pool time → [B*C, d_model] → [B, C, d_model]
-        return enc[0].mean(dim=1).reshape(B, self.c_in, self.d_model)
+        # enc[0]: [B*C, T, d_model]
+        # Attention-weighted pooling: cls_token acts as a learned global query.
+        # Different inputs attend to different timesteps → discriminative representations.
+        finest = enc[0]                                                 # [B*C, T, d_model]
+        BxC = finest.shape[0]
+        q = self.cls_token.expand(BxC, 1, self.d_model)                # [B*C, 1, d_model]
+        attn = torch.bmm(q, finest.transpose(1, 2)) / (self.d_model ** 0.5)  # [B*C, 1, T]
+        attn = F.softmax(attn, dim=-1)
+        global_rep = torch.bmm(attn, finest).squeeze(1)                # [B*C, d_model]
+        return global_rep.reshape(B, self.c_in, self.d_model)          # [B, C, d_model]
 
     def forward_ibot(self, z: torch.Tensor, mask=None) -> torch.Tensor:
         """iBOT timestep encoding — TSMixer-native: each timestep is a token.

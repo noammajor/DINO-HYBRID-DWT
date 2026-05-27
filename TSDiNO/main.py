@@ -422,7 +422,7 @@ def train_TS_DINO(args):
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader, optimizer, epoch, fp16_scaler, lr_schedule, wd_schedule, momentum_schedule, args, student_recon=None, teacher_recon_decoder=None, use_mlm=False, mlm_mode="ibot", mlm_phi=0.0, mlm_mask_ratio=0.4, student_ibot_head=None, teacher_ibot_head=None, ibot_center=None, student_mae_head=None):
     student_without_ddp = student.module if hasattr(student, 'module') else student
     student.train()
-    teacher.train()  # teacher is in eval mode but we need to keep track of BN stats
+    teacher.eval()   # teacher must be deterministic — dropout off (no BN in TSMixer)
     if student_recon is not None:
         student_recon.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
