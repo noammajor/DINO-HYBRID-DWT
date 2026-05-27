@@ -28,13 +28,13 @@ config = {
     "patch_len":                    16,
 
     # ── Forecasting training ───────────────────────────────────────────────────
-    "learning_rate":                0.001,
+    "learning_rate":                0.01,
     "lr_forecasting":               5e-4,
     "train_epochs":                 20,
     "epochs_forecasting":           20,
-    "batch_size":                   16,
+    "batch_size":                   128,
     "batch_size_forecast":          128,
-    "patience":                     5,
+    "patience":                     10,
     "num_workers":                  4,
     "lradj":                        "TST",
     "pct_start":                    0.2,

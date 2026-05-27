@@ -95,6 +95,7 @@ def _run(cmd: list, gpu: int, log_path: Path, dry_run: bool, label: str) -> int:
         return 0
     with open(log_path, "w") as fh:
         fh.write(f"# started {datetime.now().isoformat(timespec='seconds')}\n\n")
+        fh.flush()
         result = subprocess.run(cmd, env=env, stdout=fh, stderr=subprocess.STDOUT)
     status = "OK" if result.returncode == 0 else f"FAILED (rc={result.returncode})"
     print(f"  → {status}")
@@ -181,12 +182,15 @@ def main():
     print(f"{'='*60}")
 
     # base flags shared by both pretrain and forecast calls
+    # Supervised models (e.g. timemixer) manage their own architecture via their
+    # own config — don't override encoder_layers unless the user set it explicitly.
     base_cmd = [
         _python, str(ROOT / "Train_and_downstream.py"),
-        "--model",          args.model,
-        "--encoder_layers", str(args.layers),
-        "--lr",             str(lr),
+        "--model", args.model,
+        "--lr",    str(lr),
     ]
+    if args.model not in SUPERVISED_MODELS or args.layers != 8:
+        base_cmd += ["--encoder_layers", str(args.layers)]
     if args.lr_pred:
         base_cmd += ["--lr_pred", str(args.lr_pred)]
     if args.embed_dim:
