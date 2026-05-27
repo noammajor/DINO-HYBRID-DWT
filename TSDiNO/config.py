@@ -181,7 +181,7 @@ config = {
     # ── Backbone selection ────────────────────────────────────────────────────
     # "patchtst"  — transformer over non-overlapping patches (default)
     # "tsmixer"   — TimeMixer multi-scale season/trend mixing
-    "backbone_type": "tsmixer",
+    "backbone_type": "patchtst",
 
     # ── TSMixer-specific (only used when backbone_type = "tsmixer") ───────────
     # Values match TimeMixer's own config_timemixer.py defaults.
