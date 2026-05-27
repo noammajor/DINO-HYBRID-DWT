@@ -864,7 +864,6 @@ def test_run(args):
         model = TSMixerForecastModel(
             backbone=TSMixerForDINO(**_tm_kwargs),
             pred_len=args.pred_len,
-            head_dropout=getattr(args, 'head_dropout_forecasting', args.head_dropout),
         )
     else:
         model = PatchTST(

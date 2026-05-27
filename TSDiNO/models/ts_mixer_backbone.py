@@ -272,36 +272,51 @@ class TSMixerForDINO(nn.Module):
 
 
 class TSMixerForecastModel(nn.Module):
-    """Pretrained TSMixerForDINO backbone + linear forecasting head.
+    """Pretrained TSMixerForDINO backbone + original TimeMixer multi-scale head.
 
-    Exposes the same .backbone / .head interface expected by test_run() so the
-    existing optimizer, linear-probe freeze, and checkpoint-loading code works
-    without modification.
+    Mirrors TimeMixer's Future Multipredictor Mixing (channel_independence=1):
+      - One predict_layer per scale: Linear(seq_len/2^i → pred_len) on time dim
+      - One projection_layer: Linear(d_model → 1) collapses model dim
+      - Outputs summed across all scales, then RevIN denorm
 
-    Forward (with RevIN, matching TimeMixer's own forecasting path):
-      1. _multi_scale_process(normalize=True)  — applies per-instance RevIN
-      2. _embed_and_mix                        — PDM blocks, finest scale [B*C, T, d_model]
-      3. Flatten + Linear head                 → [B*C, pred_len]
-      4. Reshape                               → [B, pred_len, C]
-      5. RevIN denorm via normalize_layers[0]  — restores original scale
+    Forward:
+      1. _multi_scale_process(normalize=True)          — per-instance RevIN
+      2. _embed_and_mix                                — PDM blocks → enc_out_list
+      3. predict_layers[i](enc[i].T).T                 → [B*C, pred_len, d_model]
+      4. projection_layer                              → [B*C, pred_len, 1]
+      5. Reshape → [B, pred_len, C], sum across scales
+      6. RevIN denorm
     """
 
-    def __init__(self, backbone: TSMixerForDINO, pred_len: int, head_dropout: float = 0.1):
+    def __init__(self, backbone: TSMixerForDINO, pred_len: int):
         super().__init__()
-        self.backbone = backbone
-        self.head = nn.Sequential(
-            nn.Dropout(head_dropout),
-            nn.Linear(backbone.seq_len * backbone.d_model, pred_len),
-        )
+        self.backbone  = backbone
+        self.pred_len  = pred_len
+        n_scales       = backbone.down_sampling_layers + 1
+        win            = backbone.down_sampling_window
+        self.predict_layers = nn.ModuleList([
+            nn.Linear(backbone.seq_len // (win ** i), pred_len)
+            for i in range(n_scales)
+        ])
+        self.projection_layer = nn.Linear(backbone.d_model, 1, bias=True)
+        # keep .head as an alias so checkpoint/optimizer code that references .head still works
+        self.head = self.projection_layer
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, T, C]  →  [B, pred_len, C]"""
         B, T, C = x.shape
-        x_list = self.backbone._multi_scale_process(x, normalize=True)
-        enc    = self.backbone._embed_and_mix(x_list)
-        finest = enc[0]                                      # [B*C, T, d_model]
-        flat   = finest.reshape(B * C, -1)                   # [B*C, T*d_model]
-        pred   = self.head(flat)                             # [B*C, pred_len]
-        pred   = pred.reshape(B, C, -1).permute(0, 2, 1)    # [B, pred_len, C]
-        pred   = self.backbone.normalize_layers[0](pred, 'denorm')
-        return pred
+        x_list  = self.backbone._multi_scale_process(x, normalize=True)
+        enc     = self.backbone._embed_and_mix(x_list)   # list of [B*C, T/2^i, d_model]
+
+        dec_out_list = []
+        for i, enc_out in enumerate(enc):
+            # enc_out: [B*C, Ti, d_model]
+            dec = self.predict_layers[i](
+                enc_out.permute(0, 2, 1)                 # [B*C, d_model, Ti]
+            ).permute(0, 2, 1)                            # [B*C, pred_len, d_model]
+            dec = self.projection_layer(dec)              # [B*C, pred_len, 1]
+            dec = dec.reshape(B, C, self.pred_len).permute(0, 2, 1).contiguous()  # [B, pred_len, C]
+            dec_out_list.append(dec)
+
+        out = torch.stack(dec_out_list, dim=-1).sum(-1)  # [B, pred_len, C]
+        return self.backbone.normalize_layers[0](out, 'denorm')
