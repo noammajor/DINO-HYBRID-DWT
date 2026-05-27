@@ -27,16 +27,20 @@ ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
 IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
-ALL_MODELS         = ["dino", "jepa", "lejepa", "patchtst", "ntp", "hybrid", "timedart"]
+ALL_MODELS         = ["dino", "jepa", "lejepa", "patchtst", "ntp", "hybrid", "timedart", "timemixer"]
+
+# TimeMixer is supervised (no pretrain phase) — skip_pretrain is forced True for it.
+SUPERVISED_MODELS  = {"timemixer"}
 
 MODEL_DEFAULT_LR = {
-    "dino":     5e-4,
-    "jepa":     5e-4,
-    "lejepa":   5e-4,
-    "patchtst": 5e-5,
-    "ntp":      5e-5,
-    "hybrid":   5e-4,
-    "timedart": 1e-4,
+    "dino":      5e-4,
+    "jepa":      5e-4,
+    "lejepa":    5e-4,
+    "patchtst":  5e-5,
+    "ntp":       5e-5,
+    "hybrid":    5e-4,
+    "timedart":  1e-4,
+    "timemixer": 1e-4,
 }
 
 _python = sys.executable
@@ -217,7 +221,8 @@ def main():
         base_cmd += ["--backbone_type", args.backbone_type]
 
     # ── pretrain ──────────────────────────────────────────────────────────────
-    if not args.skip_pretrain:
+    _skip_pretrain = args.skip_pretrain or (args.model in SUPERVISED_MODELS)
+    if not _skip_pretrain:
         rc = _run(
             base_cmd + [
                 "--pretrain_only",    "true",
@@ -234,16 +239,17 @@ def main():
             sys.exit(rc)
 
     # ── copy best checkpoint to unified path ──────────────────────────────────
-    src_ckpt = _find_src_checkpoint(args.model, args.dataset, args.layers, args.out_dim, args.ckpt_tag)
-    if not args.dry_run:
-        if src_ckpt.exists():
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_ckpt, target_ckpt)
-            print(f"\nCheckpoint → {target_ckpt}")
+    if args.model not in SUPERVISED_MODELS:
+        src_ckpt = _find_src_checkpoint(args.model, args.dataset, args.layers, args.out_dim, args.ckpt_tag)
+        if not args.dry_run:
+            if src_ckpt.exists():
+                target_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_ckpt, target_ckpt)
+                print(f"\nCheckpoint → {target_ckpt}")
+            else:
+                print(f"\nWarning: expected checkpoint not found at {src_ckpt}")
         else:
-            print(f"\nWarning: expected checkpoint not found at {src_ckpt}")
-    else:
-        print(f"\n[dry_run] copy  {src_ckpt}\n         →     {target_ckpt}")
+            print(f"\n[dry_run] copy  {src_ckpt}\n         →     {target_ckpt}")
 
     # ── forecast ──────────────────────────────────────────────────────────────
     forecast_cmd = base_cmd + [

@@ -30,8 +30,8 @@ config = {
     # ── Forecasting training ───────────────────────────────────────────────────
     "learning_rate":                0.001,
     "lr_forecasting":               5e-4,
-    "train_epochs":                 10,
-    "epochs_forecasting":           10,
+    "train_epochs":                 20,
+    "epochs_forecasting":           20,
     "batch_size":                   16,
     "batch_size_forecast":          128,
     "patience":                     5,
