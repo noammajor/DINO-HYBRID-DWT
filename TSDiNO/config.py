@@ -190,7 +190,7 @@ config = {
     # must have crop_ratio=1.0 (the PDM Linear layers are sized for seq_len).
     "tsmixer_d_model":              128,  # embedding dim inside the TSMixer backbone
     "tsmixer_d_ff":                 256,  # feed-forward dim inside each PDM block
-    "tsmixer_e_layers":             2,    # number of PastDecomposableMixing blocks
+    "tsmixer_e_layers":             3,    # number of PastDecomposableMixing blocks
     "tsmixer_down_sampling_layers": 3,    # multi-scale levels (seq_len / 2^k per level)
     "tsmixer_down_sampling_window": 2,    # pooling stride per downsampling step
     "tsmixer_down_sampling_method": "avg",  # "avg" | "max"
