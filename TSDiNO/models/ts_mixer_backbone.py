@@ -27,19 +27,18 @@ from TimeMixer import PastDecomposableMixing               # noqa: E402
 class TSMixerForDINO(nn.Module):
     """TimeMixer encoder wrapped for DINO/iBOT pretraining.
 
-    Public API mirrors PatchTST's DINO interface so TSMultiCropWrapper and
-    train_one_epoch work without modification:
+    Encoder pipeline matches TimeMixer.Model.forecast() 1-to-1 (minus task heads):
+      _multi_scale_process  →  pool all scales, then per-scale RevIN + CI reshape
+      pre_enc               →  season decomp before embedding (CI=1: passthrough)
+      enc_embedding         →  DataEmbedding_wo_pos per scale
+      pdm_blocks            →  PastDecomposableMixing × e_layers
 
-      forward(x)              [B, T, C] -> [B, C, d_model]      global per-variable embedding
-      forward_ibot(z, mask)   [B, T, C] -> [B, NP, C, d_model]  per-patch tokens for iBOT
-      forward_recon(z)        [B, T, C] -> [B, NP, C, d_model]  per-patch tokens for recon loss
+    DINO-specific additions on top:
+      mask_token            —  learnable [1, 1, d_model] for iBOT masking
+      forward / forward_ibot / forward_ibot_multiscale / forward_recon
 
-    Always uses channel_independence=1: each variable is embedded independently as a
-    univariate series, matching PatchTST's per-channel CLS-token structure.
-
-    WARNING: if down_sampling_layers > 0 the internal Linear layers are built for the
-    configured seq_len.  All DINO crop views must therefore share the same temporal
-    length — set crop_ratio=1.0 in every global_crops / local_crops config entry.
+    WARNING: PDM Linear layers are fixed to seq_len. All DINO crop views must share
+    the same temporal length — set crop_ratio=1.0 in global_crops / local_crops.
     """
 
     def __init__(
@@ -57,6 +56,8 @@ class TSMixerForDINO(nn.Module):
         decomp_method: str = 'moving_avg',
         moving_avg: int = 25,
         top_k: int = 5,
+        use_norm: int = 1,              # 1=RevIN on, 0=off — matches TimeMixer's use_norm
+        channel_independence: int = 1,  # 1=CI (default), 0=joint
     ):
         super().__init__()
         self.d_model = d_model
@@ -67,30 +68,35 @@ class TSMixerForDINO(nn.Module):
         self.down_sampling_window = down_sampling_window
         self.down_sampling_method = down_sampling_method
         self.e_layers = e_layers
+        self.channel_independence = channel_independence
 
-        # Minimal configs object consumed by PastDecomposableMixing
         configs = SimpleNamespace(
             seq_len=seq_len,
             d_model=d_model, d_ff=d_ff, dropout=dropout,
             down_sampling_layers=down_sampling_layers,
             down_sampling_window=down_sampling_window,
-            channel_independence=1,
+            channel_independence=channel_independence,
             decomp_method=decomp_method,
             moving_avg=moving_avg,
             top_k=top_k,
         )
 
-        # CI=1: each variable embedded as a univariate series
-        self.enc_embedding = DataEmbedding_wo_pos(1, d_model, 'timeF', 'h', dropout)
+        # Season decomposition applied in pre_enc before embedding — matches TimeMixer.preprocess
+        self.preprocess = series_decomp(moving_avg)
+
+        # CI=1: univariate (1 feature per token); CI=0: multivariate (c_in features)
+        enc_in = 1 if channel_independence == 1 else c_in
+        self.enc_embedding = DataEmbedding_wo_pos(enc_in, d_model, 'timeF', 'h', dropout)
 
         # PastDecomposableMixing blocks (season + trend mixing across scales)
         self.pdm_blocks = nn.ModuleList(
             [PastDecomposableMixing(configs) for _ in range(e_layers)]
         )
 
-        # Per-scale instance norm (applied on [B, T, C] before CI reshape)
+        # Per-scale RevIN — Normalize IS RevIN: per-instance mean/std with learnable affine.
+        # non_norm=True disables it entirely when use_norm=0, matching TimeMixer's flag.
         self.normalize_layers = nn.ModuleList([
-            Normalize(c_in, affine=True)
+            Normalize(c_in, affine=True, non_norm=True if use_norm == 0 else False)
             for _ in range(down_sampling_layers + 1)
         ])
 
@@ -104,39 +110,66 @@ class TSMixerForDINO(nn.Module):
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _multi_scale_process(self, x: torch.Tensor):
-        """Normalise + downsample x [B, T, C] into a list of scale tensors.
+        """Pool all scales then apply per-scale RevIN + CI reshape.
 
-        x_list[0] = finest (T = seq_len), x_list[k] = T / window^k.
+        Matches TimeMixer.Model.__multi_scale_process_inputs → normalize loop in forecast():
+          Step 1 — progressive pooling (raw values, no norm yet)
+          Step 2 — Normalize(xs, 'norm') per scale, then CI=1 reshape to [B*N, T_k, 1]
         """
-        x_list = [self.normalize_layers[0](x, 'norm')]
-        x_d = x.permute(0, 2, 1)  # [B, C, T] for 1-D pooling
-        for i in range(self.down_sampling_layers):
+        # Step 1: pool all scales (raw) — mirrors __multi_scale_process_inputs
+        raw_list = [x]
+        x_d = x.permute(0, 2, 1)   # [B, C, T] for 1-D pooling
+        for _ in range(self.down_sampling_layers):
             if self.down_sampling_method == 'max':
                 x_d = F.max_pool1d(x_d, self.down_sampling_window)
-            else:  # 'avg' (default)
+            else:   # 'avg' (default)
                 x_d = F.avg_pool1d(x_d, self.down_sampling_window)
-            x_list.append(
-                self.normalize_layers[i + 1](x_d.permute(0, 2, 1), 'norm')
-            )
+            raw_list.append(x_d.permute(0, 2, 1))
+
+        # Step 2: per-scale RevIN then CI reshape — mirrors normalize loop in forecast()
+        x_list = []
+        for i, xs in enumerate(raw_list):
+            B, T, N = xs.size()
+            xs = self.normalize_layers[i](xs, 'norm')
+            if self.channel_independence == 1:
+                xs = xs.permute(0, 2, 1).contiguous().reshape(B * N, T, 1)
+            x_list.append(xs)
         return x_list
 
-    def _embed_and_mix(self, x_list, mask_patches=None):
-        """Embed each scale (CI=1) then run all PDM blocks.
+    def pre_enc(self, x_list):
+        """Season decomposition before embedding — exact copy of TimeMixer.Model.pre_enc.
 
-        mask_patches: [B*C, T_finest] bool — positions replaced with mask_token.
-                      Applied only at finest scale (index 0), in embedding space,
-                      so coarser scales still carry full-resolution signal as context.
-
-        Returns enc_out_list: list of [B*C, T_scale, d_model].
+        CI=1: passthrough, returns (x_list, None). Decomp is handled inside PDM blocks.
+        CI=0: decomposes each scale into (season, trend) via series_decomp; season is
+              passed to enc_embedding, trend is used by PDM internally.
         """
+        if self.channel_independence == 1:
+            return (x_list, None)
+        out1_list, out2_list = [], []
+        for x in x_list:
+            x_1, x_2 = self.preprocess(x)
+            out1_list.append(x_1)
+            out2_list.append(x_2)
+        return (out1_list, out2_list)
+
+    def _embed_and_mix(self, x_list, mask_patches=None):
+        """pre_enc → embed each scale → PDM blocks. Matches TimeMixer.Model.forecast().
+
+        x_list entries are already RevIN-normalised and CI-reshaped by _multi_scale_process.
+        pre_enc returns (season_list, trend_list); we embed from season_list (x_list[0]).
+
+        mask_patches: bool tensor at finest-scale — True positions replaced with mask_token.
+          CI=1: [B*C, T]   CI=0: [B, T]
+        """
+        x_list = self.pre_enc(x_list)
+
         enc_out_list = []
-        for scale_idx, x in enumerate(x_list):
-            B, T, _ = x.shape
-            x_ci = x.permute(0, 2, 1).contiguous().reshape(B * self.c_in, T, 1)
-            emb = self.enc_embedding(x_ci, None)    # [B*C, T, d_model]
+        for scale_idx, x in enumerate(x_list[0]):
+            T = x.shape[1]
+            emb = self.enc_embedding(x, None)       # [B*C, T, d_model] (CI=1)
 
             if mask_patches is not None and scale_idx == 0:
-                mt = self.mask_token.expand(B * self.c_in, T, -1)
+                mt = self.mask_token.expand(emb.shape[0], T, -1)
                 emb = torch.where(mask_patches.unsqueeze(-1), mt, emb)
 
             enc_out_list.append(emb)

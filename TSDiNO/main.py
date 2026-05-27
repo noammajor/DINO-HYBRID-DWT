@@ -155,18 +155,19 @@ def train_TS_DINO(args):
         _tm_kwargs = dict(
             c_in=args.c_in,
             seq_len=_seq_len,
-            # Use TimeMixer's own architecture dims (independent of PatchTST's embed_dim)
             d_model=cfg.get('tsmixer_d_model', 16),
             e_layers=cfg.get('tsmixer_e_layers', 2),
             d_ff=cfg.get('tsmixer_d_ff', 32),
             dropout=args.dropout,
-            patch_len=args.patch_len,  # only used for patch-level pooling in forward_ibot/recon
+            patch_len=args.patch_len,
             down_sampling_layers=cfg.get('tsmixer_down_sampling_layers', 3),
             down_sampling_window=cfg.get('tsmixer_down_sampling_window', 2),
             down_sampling_method=cfg.get('tsmixer_down_sampling_method', 'avg'),
             decomp_method=cfg.get('tsmixer_decomp_method', 'moving_avg'),
             moving_avg=cfg.get('tsmixer_moving_avg', 25),
             top_k=cfg.get('tsmixer_top_k', 5),
+            use_norm=cfg.get('tsmixer_use_norm', 1),
+            channel_independence=cfg.get('tsmixer_channel_independence', 1),
         )
         student = TSMixerForDINO(**_tm_kwargs)
         teacher = TSMixerForDINO(**_tm_kwargs)
