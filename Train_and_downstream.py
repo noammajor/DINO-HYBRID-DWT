@@ -287,7 +287,8 @@ def run_dino(skip_train: bool = False,
         else:
             _src_tag = ''
         _outdim_tag = f"_outdim{dino_cfg['out_dim']}" if dino_cfg.get('out_dim') is not None else ''
-        _ckpt_tag = f"_{ckpt_tag}" if ckpt_tag else ''
+        _bbone = backbone_type or dino_cfg.get('backbone_type', 'patchtst')
+        _ckpt_tag = f"_{ckpt_tag}" if ckpt_tag else (f"_{_bbone}" if _bbone == 'tsmixer' else '')
         dino_cfg['output_dir'] = dino_cfg.get('output_dir', './checkpoints').rstrip('/') + f'{_src_tag}_layers{encoder_layers}{_outdim_tag}{_ckpt_tag}' + _SEED_TAG
     if num_patches is not None:
         dino_cfg['num_patches'] = num_patches
