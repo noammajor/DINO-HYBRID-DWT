@@ -116,12 +116,11 @@ class TSMixerForDINO(nn.Module):
 
     # ── internal helpers ───────────────────────────────────────────────────────
 
-    def _multi_scale_process(self, x: torch.Tensor):
+    def _multi_scale_process(self, x: torch.Tensor, normalize: bool = True):
         """Pool all scales then apply per-scale RevIN + CI reshape.
 
-        Matches TimeMixer.Model.__multi_scale_process_inputs → normalize loop in forecast():
-          Step 1 — progressive pooling (raw values, no norm yet)
-          Step 2 — Normalize(xs, 'norm') per scale, then CI=1 reshape to [B*N, T_k, 1]
+        normalize=False skips RevIN (used by DINO forward to mirror PatchTST behaviour:
+        PatchTST DINO mode does not apply RevIN so raw amplitude/offset are preserved).
         """
         # Step 1: pool all scales (raw) — mirrors __multi_scale_process_inputs
         raw_list = [x]
@@ -137,7 +136,8 @@ class TSMixerForDINO(nn.Module):
         x_list = []
         for i, xs in enumerate(raw_list):
             B, T, N = xs.size()
-            xs = self.normalize_layers[i](xs, 'norm')
+            if normalize:
+                xs = self.normalize_layers[i](xs, 'norm')
             if self.channel_independence == 1:
                 xs = xs.permute(0, 2, 1).contiguous().reshape(B * N, T, 1)
             x_list.append(xs)
@@ -196,7 +196,7 @@ class TSMixerForDINO(nn.Module):
                   TSMultiCropWrapper reshapes this to [B*C, d_model] before DINOHead.
         """
         B = x.shape[0]
-        enc = self._embed_and_mix(self._multi_scale_process(x))
+        enc = self._embed_and_mix(self._multi_scale_process(x, normalize=False))
         # enc[0]: [B*C, T, d_model]
         # Attention-weighted pooling: cls_token acts as a learned global query.
         # Different inputs attend to different timesteps → discriminative representations.
@@ -222,7 +222,7 @@ class TSMixerForDINO(nn.Module):
             # Expand timestep mask to [B*C, T]
             mask_patches = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, T)
 
-        enc = self._embed_and_mix(self._multi_scale_process(z), mask_patches=mask_patches)
+        enc = self._embed_and_mix(self._multi_scale_process(z, normalize=False), mask_patches=mask_patches)
 
         # enc[0]: [B*C, T, d_model] — each timestep is a native TSMixer token
         finest = enc[0]                                                           # [B*C, T, d_model]
@@ -247,7 +247,7 @@ class TSMixerForDINO(nn.Module):
         if mask is not None:
             mask_patches = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, T)
 
-        enc = self._embed_and_mix(self._multi_scale_process(z), mask_patches=mask_patches)
+        enc = self._embed_and_mix(self._multi_scale_process(z, normalize=False), mask_patches=mask_patches)
 
         scale_tokens = []
         scale_masks  = []
