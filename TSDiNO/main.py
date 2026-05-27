@@ -254,7 +254,9 @@ def train_TS_DINO(args):
     student_recon = None
     teacher_recon_decoder = None
     if use_reconstruction:
-        student_recon = PatchReconDecoder(embed_dim, args.patch_len).to(device)
+        # TSMixer: each token is a single timestep, so predict 1 value; PatchTST: patch_len values.
+        _recon_out = 1 if backbone_type == 'tsmixer' else args.patch_len
+        student_recon = PatchReconDecoder(embed_dim, _recon_out).to(device)
         teacher_recon_decoder = copy.deepcopy(student_recon)
         for p in teacher_recon_decoder.parameters():
             p.requires_grad = False
@@ -283,7 +285,9 @@ def train_TS_DINO(args):
         ibot_center = torch.zeros(1, ibot_out_dim, device=device)
         print(f"[DINO+iBOT] phi={mlm_phi}  mask_ratio={mlm_mask_ratio}")
     elif use_mlm and mlm_mode == "mae":
-        student_mae_head = PatchReconDecoder(embed_dim, args.patch_len).to(device)
+        # TSMixer: predict 1 raw value per timestep token; PatchTST: patch_len values per patch.
+        _mae_out = 1 if backbone_type == 'tsmixer' else args.patch_len
+        student_mae_head = PatchReconDecoder(embed_dim, _mae_out).to(device)
         print(f"[DINO+MAE]  phi={mlm_phi}  mask_ratio={mlm_mask_ratio}")
 
 #-----------------Loss function --------------------
@@ -450,6 +454,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             teacher_output = teacher(dino_samples[:n_global])
             student_output = student(dino_samples)
             loss = dino_loss(student_output, teacher_output, epoch)
+            _dino_loss_val = loss.item()
 
             # ── Reconstruction loss (MAE-style, original data only) ────────────
             if use_recon_this:
@@ -481,8 +486,12 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             if use_mlm:
                 _mlm_in    = dino_samples[0]   # [B, T, n_vars] first global crop
                 _B, _T, _C = _mlm_in.shape
-                _NP        = _T // args.patch_len
-                _pmask     = torch.rand(_B, _NP, device=device) < mlm_mask_ratio
+                # TSMixer: tokens are timestep-level (num_tokens=T).
+                # PatchTST: tokens are patch-level (num_tokens=T//patch_len).
+                _bbone = student_without_ddp.backbone
+                _is_tsmixer = hasattr(_bbone, 'num_tokens')
+                _NP    = _bbone.num_tokens if _is_tsmixer else _T // args.patch_len
+                _pmask = torch.rand(_B, _NP, device=device) < mlm_mask_ratio
                 # Student always uses mask_token at masked positions
                 _s_tok = student_without_ddp.backbone.forward_ibot(_mlm_in, _pmask)
                 # [B, NP, n_vars, d_model]
@@ -507,11 +516,17 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                             ibot_center.mul_(0.9).add_(_t_ibot.mean(0, keepdim=True) * 0.1)
                         metric_logger.update(ibot_loss=_mlm_loss.item())
                     else:  # mae
-                        _gt = _mlm_in.unfold(1, args.patch_len, args.patch_len)
-                        # [B, NP, n_vars, patch_len]
-                        _gt_all    = _gt.permute(0,2,1,3).reshape(_B2*_NV, _NP2, args.patch_len)
-                        _gt_masked = _gt_all[_mexp]   # [N_masked, patch_len]
-                        _pred      = student_mae_head(_s_masked)  # [N_masked, patch_len]
+                        if _is_tsmixer:
+                            # Each token predicts its own raw normalized value.
+                            _gt_all    = _mlm_in.permute(0, 2, 1).reshape(_B2*_NV, _NP2)
+                            _gt_masked = _gt_all[_mexp]          # [N_masked]
+                            _pred      = student_mae_head(_s_masked).squeeze(-1)  # [N_masked]
+                        else:
+                            _gt = _mlm_in.unfold(1, args.patch_len, args.patch_len)
+                            # [B, NP, n_vars, patch_len]
+                            _gt_all    = _gt.permute(0,2,1,3).reshape(_B2*_NV, _NP2, args.patch_len)
+                            _gt_masked = _gt_all[_mexp]          # [N_masked, patch_len]
+                            _pred      = student_mae_head(_s_masked)  # [N_masked, patch_len]
                         _mlm_loss  = F.mse_loss(_pred, _gt_masked)
                         metric_logger.update(mae_loss=_mlm_loss.item())
                     loss = mlm_phi * loss + (1.0 - mlm_phi) * _mlm_loss
@@ -554,6 +569,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         if device.type == 'cuda':
             torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
+        if use_mlm:
+            metric_logger.update(dino_loss=_dino_loss_val)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
     # gather the stats from all processes

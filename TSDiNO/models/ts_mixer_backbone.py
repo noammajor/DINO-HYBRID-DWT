@@ -93,6 +93,9 @@ class TSMixerForDINO(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         trunc_normal_(self.mask_token, std=0.02)
 
+        # Timestep-level tokens: each of the T positions in enc_out_list[0] is a token.
+        self.num_tokens = seq_len
+
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _multi_scale_process(self, x: torch.Tensor):
@@ -153,32 +156,65 @@ class TSMixerForDINO(nn.Module):
         return enc[0].mean(dim=1).reshape(B, self.c_in, self.d_model)
 
     def forward_ibot(self, z: torch.Tensor, mask=None) -> torch.Tensor:
-        """iBOT patch encoding.
+        """iBOT timestep encoding — TSMixer-native: each timestep is a token.
 
         z:    [B, T, C]
-        mask: [B, NP] bool — True=masked (student). None=full pass (teacher).
-        returns: [B, NP, C, d_model]
+        mask: [B, T] bool — True=masked (student). None=full pass (teacher).
+        returns: [B, T, C, d_model]
         """
         B, T, C = z.shape
-        NP = T // self.patch_len
 
         mask_patches = None
         if mask is not None:
-            # Expand patch mask to timestep resolution: [B*C, T]
-            mask_exp = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, NP)
-            mask_patches = mask_exp.repeat_interleave(self.patch_len, dim=1)   # [B*C, T]
+            # Expand timestep mask to [B*C, T]
+            mask_patches = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, T)
 
         enc = self._embed_and_mix(self._multi_scale_process(z), mask_patches=mask_patches)
 
-        # enc[0]: [B*C, T, d_model] — segment into NP patches and mean-pool each
+        # enc[0]: [B*C, T, d_model] — each timestep is a native TSMixer token
         finest = enc[0]                                                  # [B*C, T, d_model]
-        finest = finest.reshape(B * C, NP, self.patch_len, self.d_model).mean(dim=2)  # [B*C, NP, d_model]
-        return finest.reshape(B, C, NP, self.d_model).permute(0, 2, 1, 3)  # [B, NP, C, d_model]
+        return finest.reshape(B, C, T, self.d_model).permute(0, 2, 1, 3)  # [B, T, C, d_model]
+
+    def forward_ibot_multiscale(self, z: torch.Tensor, mask=None):
+        """Multi-scale iBOT encoding — concatenates tokens from every TSMixer scale.
+
+        enc_out_list[k] has T_k = T / window^k timesteps. Masking is applied only at
+        the finest scale (k=0) so coarser scales always carry full-resolution context,
+        which is the key TSMixer design principle.
+
+        z:    [B, T, C]
+        mask: [B, T] bool — True=masked at finest scale. None=full pass (teacher).
+        returns:
+            tokens    [B, N_total, C, d_model]  N_total = T + T/W + T/W^2 + ...
+            full_mask [B, N_total] bool          True only at masked fine-scale positions
+        """
+        B, T, C = z.shape
+
+        mask_patches = None
+        if mask is not None:
+            mask_patches = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, T)
+
+        enc = self._embed_and_mix(self._multi_scale_process(z), mask_patches=mask_patches)
+
+        scale_tokens = []
+        scale_masks  = []
+        for k, enc_k in enumerate(enc):                              # [B*C, T_k, d_model]
+            T_k = enc_k.shape[1]
+            tok = enc_k.reshape(B, C, T_k, self.d_model).permute(0, 2, 1, 3)  # [B, T_k, C, d_model]
+            scale_tokens.append(tok)
+            if mask is not None and k == 0:
+                scale_masks.append(mask)                             # [B, T]
+            else:
+                scale_masks.append(torch.zeros(B, T_k, dtype=torch.bool, device=z.device))
+
+        tokens    = torch.cat(scale_tokens, dim=1)                   # [B, N_total, C, d_model]
+        full_mask = torch.cat(scale_masks,  dim=1) if mask is not None else None
+        return tokens, full_mask
 
     def forward_recon(self, z: torch.Tensor) -> torch.Tensor:
-        """Full (unmasked) patch encoding for reconstruction loss.
+        """Full (unmasked) timestep encoding for reconstruction loss.
 
         z: [B, T, C]
-        returns: [B, NP, C, d_model]
+        returns: [B, T, C, d_model]
         """
         return self.forward_ibot(z, mask=None)
