@@ -218,6 +218,7 @@ def main():
             base_cmd + [
                 "--pretrain_only",    "true",
                 "--pretrain_dataset", args.dataset,
+                "--forecast_dataset", args.dataset,
             ],
             args.gpu,
             log_base / "pretrain.log",
