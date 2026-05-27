@@ -210,8 +210,8 @@ class TSMixerForDINO(nn.Module):
         enc = self._embed_and_mix(self._multi_scale_process(z), mask_patches=mask_patches)
 
         # enc[0]: [B*C, T, d_model] — each timestep is a native TSMixer token
-        finest = enc[0]                                                  # [B*C, T, d_model]
-        return finest.reshape(B, C, T, self.d_model).permute(0, 2, 1, 3)  # [B, T, C, d_model]
+        finest = enc[0]                                                           # [B*C, T, d_model]
+        return finest.reshape(B, self.c_in, T, self.d_model).permute(0, 2, 1, 3) # [B, T, C, d_model]
 
     def forward_ibot_multiscale(self, z: torch.Tensor, mask=None):
         """Multi-scale iBOT encoding — concatenates tokens from every TSMixer scale.
@@ -238,7 +238,7 @@ class TSMixerForDINO(nn.Module):
         scale_masks  = []
         for k, enc_k in enumerate(enc):                              # [B*C, T_k, d_model]
             T_k = enc_k.shape[1]
-            tok = enc_k.reshape(B, C, T_k, self.d_model).permute(0, 2, 1, 3)  # [B, T_k, C, d_model]
+            tok = enc_k.reshape(B, self.c_in, T_k, self.d_model).permute(0, 2, 1, 3)  # [B, T_k, C, d_model]
             scale_tokens.append(tok)
             if mask is not None and k == 0:
                 scale_masks.append(mask)                             # [B, T]

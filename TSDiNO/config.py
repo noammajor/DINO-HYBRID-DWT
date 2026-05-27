@@ -181,15 +181,15 @@ config = {
     # ── Backbone selection ────────────────────────────────────────────────────
     # "patchtst"  — transformer over non-overlapping patches (default)
     # "tsmixer"   — TimeMixer multi-scale season/trend mixing
-    "backbone_type": "patchtst",
+    "backbone_type": "tsmixer",
 
     # ── TSMixer-specific (only used when backbone_type = "tsmixer") ───────────
     # Values match TimeMixer's own config_timemixer.py defaults.
     # d_model / d_ff / e_layers are independent of PatchTST's embed_dim / d_ff / n_layers.
     # NOTE: if tsmixer_down_sampling_layers > 0, all global_crops and local_crops
     # must have crop_ratio=1.0 (the PDM Linear layers are sized for seq_len).
-    "tsmixer_d_model":              16,   # embedding dim inside the TSMixer backbone
-    "tsmixer_d_ff":                 32,   # feed-forward dim inside each PDM block
+    "tsmixer_d_model":              128,  # embedding dim inside the TSMixer backbone
+    "tsmixer_d_ff":                 256,  # feed-forward dim inside each PDM block
     "tsmixer_e_layers":             2,    # number of PastDecomposableMixing blocks
     "tsmixer_down_sampling_layers": 3,    # multi-scale levels (seq_len / 2^k per level)
     "tsmixer_down_sampling_window": 2,    # pooling stride per downsampling step
