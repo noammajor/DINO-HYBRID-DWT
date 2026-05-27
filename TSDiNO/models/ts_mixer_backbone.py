@@ -6,17 +6,22 @@ import torch.nn.functional as F
 from types import SimpleNamespace
 from torch.nn.init import trunc_normal_
 
-# Make TimeMixer-main importable from wherever this module is loaded
+# Make TimeMixer-main importable from wherever this module is loaded.
+# We add both the root (so 'layers.*' resolves) and models/ directly (so we
+# can import 'TimeMixer' without going through the 'models' package, which
+# would collide with TSDiNO's own 'models' already cached in sys.modules).
 _TIMEMIXER_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'TimeMixer-main')
 )
-if _TIMEMIXER_ROOT not in sys.path:
-    sys.path.insert(0, _TIMEMIXER_ROOT)
+_TIMEMIXER_MODELS = os.path.join(_TIMEMIXER_ROOT, 'models')
+for _p in (_TIMEMIXER_ROOT, _TIMEMIXER_MODELS):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from layers.Autoformer_EncDec import series_decomp        # noqa: E402
 from layers.Embed import DataEmbedding_wo_pos              # noqa: E402
 from layers.StandardNorm import Normalize                  # noqa: E402
-from models.TimeMixer import PastDecomposableMixing        # noqa: E402
+from TimeMixer import PastDecomposableMixing               # noqa: E402
 
 
 class TSMixerForDINO(nn.Module):
