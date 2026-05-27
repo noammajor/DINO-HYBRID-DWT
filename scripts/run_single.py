@@ -256,11 +256,19 @@ def main():
             print(f"\n[dry_run] copy  {src_ckpt}\n         →     {target_ckpt}")
 
     # ── forecast ──────────────────────────────────────────────────────────────
-    forecast_cmd = base_cmd + [
-        "--task",             "forecast",
-        "--pretrain_dataset", args.dataset,
-        "--forecast_dataset", args.dataset,
-    ]
+    # Supervised models train directly on the forecasting task — don't pass
+    # --task forecast (which sets skip_train=True and skips all training).
+    if args.model in SUPERVISED_MODELS:
+        forecast_cmd = base_cmd + [
+            "--forecast_dataset", args.dataset,
+            "--pretrain_dataset", args.dataset,
+        ]
+    else:
+        forecast_cmd = base_cmd + [
+            "--task",             "forecast",
+            "--pretrain_dataset", args.dataset,
+            "--forecast_dataset", args.dataset,
+        ]
     if args.checkpoints:
         forecast_cmd += ["--checkpoints"] + [str(c) for c in args.checkpoints]
 
