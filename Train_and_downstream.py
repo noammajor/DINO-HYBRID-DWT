@@ -198,6 +198,7 @@ def _config_to_dino_args(cfg):
         mlm_phi                     = cfg.get("mlm_phi", 0.0),
         mlm_mask_ratio              = cfg.get("mlm_mask_ratio", 0.4),
         ibot_out_dim                = cfg.get("ibot_out_dim", cfg.get("out_dim", 65536)),
+        backbone_type               = cfg.get("backbone_type", "patchtst"),
     )
     return args
 
