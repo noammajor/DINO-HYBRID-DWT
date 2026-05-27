@@ -71,7 +71,7 @@ class TSMixerForDINO(nn.Module):
         self.channel_independence = channel_independence
 
         configs = SimpleNamespace(
-            seq_len=seq_len + 1,  # +1 for the CLS token prepended at the finest scale
+            seq_len=seq_len,
             pred_len=0,          # required by PastDecomposableMixing; unused in encoder-only mode
             d_model=d_model, d_ff=d_ff, dropout=dropout,
             down_sampling_layers=down_sampling_layers,
@@ -105,11 +105,12 @@ class TSMixerForDINO(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         trunc_normal_(self.mask_token, std=0.02)
 
-        # CLS token prepended at the finest scale BEFORE PDM blocks.
-        # Participates in all temporal mixing operations — bidirectional context,
-        # like PatchTST's CLS inside the transformer.
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        trunc_normal_(self.cls_token, std=0.02)
+        # Cross-attention global pooling: a single learnable CLS query attends to all T
+        # PDM-output tokens. Runs AFTER PDM on real timestep tokens — avoids the
+        # moving-average boundary-padding problem that made CLS-in-PDM input-independent.
+        self.cls_query = nn.Parameter(torch.zeros(1, 1, d_model))
+        trunc_normal_(self.cls_query, std=0.02)
+        self.global_attn = nn.MultiheadAttention(d_model, num_heads=4, dropout=0.0, batch_first=True)
 
         # Timestep-level tokens: each of the T positions in enc_out_list[0] is a token.
         self.num_tokens = seq_len
@@ -159,11 +160,9 @@ class TSMixerForDINO(nn.Module):
             out2_list.append(x_2)
         return (out1_list, out2_list)
 
-    def _embed_and_mix(self, x_list, mask_patches=None, prepend_cls=False):
+    def _embed_and_mix(self, x_list, mask_patches=None):
         """pre_enc → embed each scale → PDM blocks. Matches TimeMixer.Model.forecast().
 
-        prepend_cls: if True, prepend the CLS token to the finest-scale embedding before PDM
-          so it participates in temporal mixing (used by forward() for DINO global token).
         mask_patches: bool tensor at finest-scale — True positions replaced with mask_token.
           CI=1: [B*C, T]   CI=0: [B, T]
         """
@@ -178,10 +177,6 @@ class TSMixerForDINO(nn.Module):
                 mt = self.mask_token.expand(emb.shape[0], T, -1)
                 emb = torch.where(mask_patches.unsqueeze(-1), mt, emb)
 
-            if prepend_cls and scale_idx == 0:
-                cls = self.cls_token.expand(emb.shape[0], 1, self.d_model)
-                emb = torch.cat([cls, emb], dim=1)  # [B*C, T+1, d_model]
-
             enc_out_list.append(emb)
 
         for pdm in self.pdm_blocks:
@@ -192,18 +187,24 @@ class TSMixerForDINO(nn.Module):
     # ── public forward methods ─────────────────────────────────────────────────
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Global DINO embedding.
+        """Global DINO embedding via cross-attention pooling over PDM output tokens.
+
+        Cross-attention runs AFTER PDM on T real timestep tokens. Unlike CLS-in-PDM,
+        this avoids the moving-average boundary-padding issue that caused mode collapse
+        (52% of CLS position came from the constant learnable parameter, not the input).
 
         x: [B, T, C]
-        returns: [B, C, d_model]  — CLS-attention-pooled over time per variable.
-                  TSMultiCropWrapper reshapes this to [B*C, d_model] before DINOHead.
+        returns: [B, C, d_model]  — per-variable global representation.
+                  TSMultiCropWrapper reshapes to [B*C, d_model] before DINOHead.
         """
         B = x.shape[0]
-        enc        = self._embed_and_mix(self._multi_scale_process(x, normalize=False),
-                                         prepend_cls=True)
-        # enc[0]: [B*C, T+1, d_model] — position 0 is the CLS token after PDM mixing
-        global_rep = enc[0][:, 0, :]                                     # [B*C, d_model]
-        return global_rep.reshape(B, self.c_in, self.d_model)            # [B, C, d_model]
+        enc    = self._embed_and_mix(self._multi_scale_process(x, normalize=False))
+        finest = enc[0]                                                    # [B*C, T, d_model]
+        # Cross-attention: learned CLS query attends to all T encoder tokens
+        q = self.cls_query.expand(B * self.c_in, 1, self.d_model)         # [B*C, 1, d_model]
+        global_rep, _ = self.global_attn(q, finest, finest)               # [B*C, 1, d_model]
+        global_rep = global_rep[:, 0, :]                                   # [B*C, d_model]
+        return global_rep.reshape(B, self.c_in, self.d_model)             # [B, C, d_model]
 
     def forward_ibot(self, z: torch.Tensor, mask=None) -> torch.Tensor:
         """iBOT timestep encoding — TSMixer-native: each timestep is a token.
