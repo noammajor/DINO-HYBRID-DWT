@@ -305,7 +305,7 @@ class TSMixerForecastModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, T, C]  →  [B, pred_len, C]"""
         B, T, C = x.shape
-        x_list  = self.backbone._multi_scale_process(x, normalize=True)
+        x_list  = self.backbone._multi_scale_process(x, normalize=False)
         enc     = self.backbone._embed_and_mix(x_list)   # list of [B*C, T/2^i, d_model]
 
         dec_out_list = []
@@ -318,5 +318,4 @@ class TSMixerForecastModel(nn.Module):
             dec = dec.reshape(B, C, self.pred_len).permute(0, 2, 1).contiguous()  # [B, pred_len, C]
             dec_out_list.append(dec)
 
-        out = torch.stack(dec_out_list, dim=-1).sum(-1)  # [B, pred_len, C]
-        return self.backbone.normalize_layers[0](out, 'denorm')
+        return torch.stack(dec_out_list, dim=-1).sum(-1)  # [B, pred_len, C]
