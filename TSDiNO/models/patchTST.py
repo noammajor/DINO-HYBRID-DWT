@@ -125,6 +125,16 @@ class PatchTST(nn.Module):
         tokens = self.backbone(patches_tensor)   # [bs, num_patch+1, n_vars, d_model]
         return tokens[:, 1:, :, :]              # drop CLS  [bs, num_patch, n_vars, d_model]
 
+    def forward_ibot(self, z, mask=None):
+        """iBOT patch encoding.
+        z:    [bs, seq_len, n_vars]
+        mask: [bs, num_patch] bool — True=masked (student). None=full pass (teacher).
+        Returns patch tokens [bs, num_patch, n_vars, d_model] (CLS dropped).
+        """
+        patches = z.unfold(dimension=1, size=self.patch_len, step=self.patch_len)
+        tokens  = self.backbone.forward_with_mask(patches, mask)  # [bs, num_patch+1, n_vars, d_model]
+        return tokens[:, 1:, :, :]                                # drop CLS
+
 
 class PatchReconDecoder(nn.Module):
     """Maps patch token embeddings back to raw patch values.
@@ -317,9 +327,11 @@ class PatchTSTEncoder(nn.Module):
         self.d_model = d_model
         self.shared_embedding = shared_embedding
         #CLS token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+        self.cls_token  = nn.Parameter(torch.zeros(1, 1, self.d_model))
         # Initialize it with small random values
-        trunc_normal_(self.cls_token, std=.02)        
+        trunc_normal_(self.cls_token, std=.02)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+        trunc_normal_(self.mask_token, std=.02)        
 
         # Input encoding: projection of feature vectors onto a d-dim vector space
         if not shared_embedding: 
@@ -399,6 +411,36 @@ class PatchTSTEncoder(nn.Module):
         return z
     
     
+    def forward_with_mask(self, x, mask=None):
+        """Like forward() but replaces masked patch embeddings with mask_token.
+        x:    [bs, num_patch, n_vars, patch_len]
+        mask: [bs, num_patch] bool, True=masked (student). None=full pass (teacher).
+        Returns [bs, num_patch+1, n_vars, d_model] (includes CLS).
+        """
+        bs, num_patch, n_vars, patch_len = x.shape
+        if not self.shared_embedding:
+            x_out = []
+            for i in range(n_vars):
+                x_out.append(self.W_P[i](x[:, :, i, :]))
+            x = torch.stack(x_out, dim=2)
+        else:
+            x = self.W_P(x)                                       # [bs, num_patch, n_vars, d_model]
+        x = x.transpose(1, 2)                                     # [bs, n_vars, num_patch, d_model]
+        u = torch.reshape(x, (bs * n_vars, num_patch, self.d_model))
+
+        if mask is not None:
+            mask_exp = mask.unsqueeze(1).expand(-1, n_vars, -1).reshape(bs * n_vars, num_patch)
+            mt = self.mask_token.expand(bs * n_vars, num_patch, -1)
+            u = torch.where(mask_exp.unsqueeze(-1), mt, u)
+
+        cls_tokens = self.cls_token.expand(u.shape[0], -1, -1)
+        u = torch.cat((cls_tokens, u), dim=1)
+        u = self.dropout(u + self._get_pos_enc(u.shape[1]))
+        z = self.encoder(u)
+        z = torch.reshape(z, (bs, n_vars, -1, self.d_model))
+        return z.permute(0, 2, 1, 3)                              # [bs, num_patch+1, n_vars, d_model]
+
+
 # Cell
 class TSTEncoder(nn.Module):
     def __init__(self, d_model, n_heads, d_ff=None, 

@@ -135,6 +135,10 @@ def main():
                         help="Global (teacher) augmentation type, overrides config")
     parser.add_argument("--aug_local",  type=str, default=None,
                         help="Local (student) augmentation type, overrides config")
+    parser.add_argument("--mlm_phi",    type=float, default=None,
+                        help="MLM weight: phi*DINO+(1-phi)*MLM (DINO only)")
+    parser.add_argument("--mlm_mode",   type=str,   default=None,
+                        help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--lr_pred",  type=float, default=None,
                         help="Predictor LR (JEPA only)")
     parser.add_argument("--gpu",      type=int, default=0,
@@ -201,6 +205,10 @@ def main():
         base_cmd += ["--aug_global", args.aug_global]
     if args.aug_local is not None:
         base_cmd += ["--aug_local", args.aug_local]
+    if args.mlm_phi is not None:
+        base_cmd += ["--mlm_phi", str(args.mlm_phi)]
+    if args.mlm_mode is not None:
+        base_cmd += ["--mlm_mode", args.mlm_mode]
     if args.phi is not None:
         base_cmd += ["--phi", str(args.phi)]
 

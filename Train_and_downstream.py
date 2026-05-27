@@ -195,6 +195,9 @@ def _config_to_dino_args(cfg):
         batch_size_classification   = cfg.get("batch_size_classification", 64),
         seq_len_classification      = cfg.get("seq_len_classification", 128),
         c_in_classification         = cfg.get("c_in_classification", 9),
+        mlm_phi                     = cfg.get("mlm_phi", 0.0),
+        mlm_mask_ratio              = cfg.get("mlm_mask_ratio", 0.4),
+        ibot_out_dim                = cfg.get("ibot_out_dim", cfg.get("out_dim", 65536)),
     )
     return args
 
@@ -227,7 +230,8 @@ def run_dino(skip_train: bool = False,
              warmup_epochs: int = None,
              ckpt_tag: str = None,
              aug_global: str = None,
-             aug_local: str = None):
+             aug_local: str = None,
+             mlm_phi: float = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
     _add_path(dino_dir)
@@ -295,6 +299,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['global_crops'] = [{"type": aug_global, "crop_ratio": 1.0}]
     if aug_local is not None:
         dino_cfg['local_crops']  = [{"type": aug_local,  "crop_ratio": 1.0}]
+    if mlm_phi is not None:
+        dino_cfg['mlm_phi'] = mlm_phi
     if seed is not None:
         dino_cfg['seed'] = seed
     pretrain_source = _resolve_pretrain_source(dino_cfg)
@@ -2808,6 +2814,7 @@ def run(model: str,
         ckpt_tag: str = None,
         aug_global: str = None,
         aug_local: str = None,
+        mlm_phi: float = None,
         phi: float = None):
     """
     Unified entry point. Each run handles ONE task.
@@ -2903,6 +2910,7 @@ def run(model: str,
     if 'ckpt_tag'              in sig.parameters: kwargs['ckpt_tag']              = ckpt_tag
     if 'aug_global'            in sig.parameters: kwargs['aug_global']            = aug_global
     if 'aug_local'             in sig.parameters: kwargs['aug_local']             = aug_local
+    if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     return runner(**kwargs)
 
@@ -2987,6 +2995,8 @@ if __name__ == "__main__":
                         help="Global (teacher) augmentation type, overrides config (e.g. 'galilien', 'dwt_soft_threshold')")
     parser.add_argument("--aug_local",  type=str, default=None,
                         help="Local (student) augmentation type, overrides config (e.g. 'lorentz', 'dwt_high_perturb')")
+    parser.add_argument("--mlm_phi",    type=float, default=None,
+                        help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -3012,6 +3022,7 @@ if __name__ == "__main__":
         ckpt_tag=args.ckpt_tag,
         aug_global=args.aug_global,
         aug_local=args.aug_local,
+        mlm_phi=args.mlm_phi,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",

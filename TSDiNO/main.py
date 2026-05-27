@@ -235,6 +235,32 @@ def train_TS_DINO(args):
             p.requires_grad = False
         print("Reconstruction decoders created.")
 
+    # ── iBOT heads (patch-level, teacher-guided cross-entropy) ─────────────────
+    mlm_phi        = cfg.get("mlm_phi", 0.0)
+    mlm_mask_ratio = cfg.get("mlm_mask_ratio", 0.4)
+    mlm_mode       = cfg.get("mlm_mode", "ibot")  # "ibot" or "mae"
+    ibot_out_dim   = cfg.get("ibot_out_dim", args.out_dim)
+    use_mlm        = mlm_phi > 0.0
+    student_ibot_head = None
+    teacher_ibot_head = None
+    ibot_center       = None
+    student_mae_head  = None
+    if use_mlm and mlm_mode == "ibot":
+        student_ibot_head = DINOHead(embed_dim, ibot_out_dim,
+                                     use_bn=args.use_bn_in_head,
+                                     norm_last_layer=args.norm_last_layer).to(device)
+        teacher_ibot_head = DINOHead(embed_dim, ibot_out_dim,
+                                     use_bn=args.use_bn_in_head,
+                                     norm_last_layer=False).to(device)
+        teacher_ibot_head.load_state_dict(student_ibot_head.state_dict())
+        for p in teacher_ibot_head.parameters():
+            p.requires_grad = False
+        ibot_center = torch.zeros(1, ibot_out_dim, device=device)
+        print(f"[DINO+iBOT] phi={mlm_phi}  mask_ratio={mlm_mask_ratio}")
+    elif use_mlm and mlm_mode == "mae":
+        student_mae_head = PatchReconDecoder(embed_dim, args.patch_len).to(device)
+        print(f"[DINO+MAE]  phi={mlm_phi}  mask_ratio={mlm_mask_ratio}")
+
 #-----------------Loss function --------------------
     dino_loss = DINOLoss(
         args.out_dim,
@@ -249,6 +275,12 @@ def train_TS_DINO(args):
     if use_reconstruction:
         # Add reconstruction decoder params (no weight decay on bias/norm, but simpler: just add all)
         params_groups.append({'params': student_recon.parameters()})
+    if use_mlm and student_ibot_head is not None:
+        params_groups.append({'params': student_ibot_head.parameters()})
+    if use_mlm and student_mae_head is not None:
+        params_groups.append({'params': student_mae_head.parameters()})
+    if use_mlm:
+        params_groups.append({'params': [student_without_ddp.backbone.backbone.mask_token]})
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)
     elif args.optimizer == "sgd":
@@ -410,6 +442,45 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 loss = loss + recon_loss_weight * recon_loss
                 metric_logger.update(recon_loss=recon_loss.item())
 
+            # ── MLM auxiliary loss (iBOT or MAE) ──────────────────────────────
+            if use_mlm:
+                _mlm_in    = dino_samples[0]   # [B, T, n_vars] first global crop
+                _B, _T, _C = _mlm_in.shape
+                _NP        = _T // args.patch_len
+                _pmask     = torch.rand(_B, _NP, device=device) < mlm_mask_ratio
+                # Student always uses mask_token at masked positions
+                _s_tok = student_without_ddp.backbone.forward_ibot(_mlm_in, _pmask)
+                # [B, NP, n_vars, d_model]
+                _B2, _NP2, _NV, _DM = _s_tok.shape
+                _mexp = _pmask.unsqueeze(2).expand(-1, -1, _NV).reshape(_B2*_NV, _NP2)
+                _s_all = _s_tok.permute(0,2,1,3).reshape(_B2*_NV, _NP2, _DM)
+                _s_masked = _s_all[_mexp]   # [N_masked, d_model]
+                if _s_masked.shape[0] > 0:
+                    if mlm_mode == "ibot":
+                        with torch.no_grad():
+                            _t_tok = teacher_without_ddp.backbone.forward_ibot(_mlm_in, None)
+                        _t_all    = _t_tok.permute(0,2,1,3).reshape(_B2*_NV, _NP2, _DM)
+                        _t_masked = _t_all[_mexp]
+                        _s_ibot = student_ibot_head(_s_masked)
+                        _t_ibot = teacher_ibot_head(_t_masked)
+                        _ttemp  = dino_loss.teacher_temp_schedule[
+                                      min(epoch, len(dino_loss.teacher_temp_schedule)-1)]
+                        _t_soft = F.softmax((_t_ibot - ibot_center) / _ttemp, dim=-1).detach()
+                        _s_log  = F.log_softmax(_s_ibot / 0.1, dim=-1)
+                        _mlm_loss = -(t_soft * _s_log).sum(dim=-1).mean()
+                        with torch.no_grad():
+                            ibot_center.mul_(0.9).add_(_t_ibot.mean(0, keepdim=True) * 0.1)
+                        metric_logger.update(ibot_loss=_mlm_loss.item())
+                    else:  # mae
+                        _gt = _mlm_in.unfold(1, args.patch_len, args.patch_len)
+                        # [B, NP, n_vars, patch_len]
+                        _gt_all    = _gt.permute(0,2,1,3).reshape(_B2*_NV, _NP2, args.patch_len)
+                        _gt_masked = _gt_all[_mexp]   # [N_masked, patch_len]
+                        _pred      = student_mae_head(_s_masked)  # [N_masked, patch_len]
+                        _mlm_loss  = F.mse_loss(_pred, _gt_masked)
+                        metric_logger.update(mae_loss=_mlm_loss.item())
+                    loss = mlm_phi * loss + (1.0 - mlm_phi) * _mlm_loss
+
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
             sys.exit(1)
@@ -439,6 +510,9 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             # EMA update for the reconstruction teacher decoder
             if use_recon_this:
                 for param_q, param_k in zip(student_recon.parameters(), teacher_recon_decoder.parameters()):
+                    param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+            if use_mlm and student_ibot_head is not None:
+                for param_q, param_k in zip(student_ibot_head.parameters(), teacher_ibot_head.parameters()):
                     param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
