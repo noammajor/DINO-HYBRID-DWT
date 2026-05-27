@@ -114,12 +114,30 @@ config = {
     #
     # ── Available aug types ───────────────────────────────────────────────────
     #
+    #  Convenience aliases (works for all three prefixes):
+    #   "<prefix>_soft" → soft_threshold  (teacher-stable global view)
+    #   "<prefix>_hard" → high_perturb    (student-aggressive local view)
+    #
     #  DWT types (prefix "dwt_"):
-    #   "dwt_soft_threshold"  — soft-threshold detail coeffs; clean global view.
+    #   "dwt_soft" / "dwt_soft_threshold"  — soft-threshold detail coeffs; clean global view.
+    #   "dwt_hard" / "dwt_high_perturb"    — Gaussian noise on all detail coeffs.
     #   "dwt_zero_out_detail" — randomly zero finest-level detail coeffs.
-    #   "dwt_high_perturb"    — Gaussian noise on all detail coeffs.
     #   "dwt_low_pass"        — zero all detail coeffs (maximally smooth).
     #   "dwt_band_scale"      — randomly scale each frequency band.
+    #
+    #  SWT types (prefix "swt_") — shift-invariant, no downsampling:
+    #   "swt_soft" / "swt_soft_threshold"  — soft-threshold on all-length detail arrays.
+    #   "swt_hard" / "swt_high_perturb"    — Gaussian noise on all detail coeffs.
+    #   "swt_zero_out_detail" — randomly zero finest-level detail coeffs.
+    #   "swt_low_pass"        — zero all detail coeffs (maximally smooth).
+    #   "swt_band_scale"      — randomly scale each frequency band.
+    #
+    #  MODWT types (prefix "modwt_") — energy-normalised SWT, shift-invariant:
+    #   "modwt_soft" / "modwt_soft_threshold"  — soft-threshold on normalised detail coeffs.
+    #   "modwt_hard" / "modwt_high_perturb"    — Gaussian noise on all detail coeffs.
+    #   "modwt_zero_out_detail" — randomly zero finest-level detail coeffs.
+    #   "modwt_low_pass"        — zero all detail coeffs (maximally smooth).
+    #   "modwt_band_scale"      — randomly scale each frequency band.
     #
     #  Non-DWT types:
     #   "lorentz"          — relativistic Lorentz boost: γ(x − v·t).

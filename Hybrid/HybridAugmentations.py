@@ -127,6 +127,159 @@ class DWTAugmentation:
         return torch.tensor(out, dtype=dtype, device=device)
 
 
+class SWTAugmentation:
+    """
+    Stationary Wavelet Transform augmentation (undecimated DWT, shift-invariant).
+    All coefficient arrays have the same length as the input — no downsampling.
+    Input is reflect-padded to the nearest multiple of 2**level before the
+    transform, then truncated back after reconstruction.
+
+    Coefficient ordering (coarsest → finest): [(cA_L,cD_L), …, (cA_1,cD_1)]
+    Same modes as DWTAugmentation. x: [B, T, C]
+    """
+    def __init__(self, wavelet='db4', level=3, mode='zero_out_detail',
+                 soft_threshold_sigma=0.3, zero_out_ratio=0.3, finest_levels=1,
+                 high_perturb_noise_range=(0.03, 0.08),
+                 band_scale_approx_range=(0.9, 1.1),
+                 band_scale_detail_range=(0.6, 1.4)):
+        if not _HAS_PYWT:
+            raise ImportError("SWTAugmentation requires pywt: pip install PyWavelets")
+        self.wavelet                  = wavelet
+        self.level                    = level
+        self.mode                     = mode
+        self.soft_threshold_sigma     = soft_threshold_sigma
+        self.zero_out_ratio           = zero_out_ratio
+        self.finest_levels            = finest_levels
+        self.high_perturb_noise_range = high_perturb_noise_range
+        self.band_scale_approx_range  = band_scale_approx_range
+        self.band_scale_detail_range  = band_scale_detail_range
+
+    def _soft_thresh(self, c, sigma):
+        threshold = sigma * np.abs(c).max() if c.size > 0 else 0.0
+        return np.sign(c) * np.maximum(np.abs(c) - threshold, 0.0)
+
+    def _pad(self, sig):
+        factor = 2 ** self.level
+        n = len(sig)
+        pad_len = factor * ((n + factor - 1) // factor)
+        if pad_len == n:
+            return sig
+        return np.pad(sig, (0, pad_len - n), mode='reflect')
+
+    def _apply_single(self, x_np):
+        T, C = x_np.shape
+        result = np.zeros_like(x_np)
+        for v in range(C):
+            sig = self._pad(x_np[:, v])
+            coeffs = pywt.swt(sig, self.wavelet, level=self.level, trim_approx=False)
+            if self.mode == 'low_pass':
+                new_c = [(ca, np.zeros_like(cd)) for ca, cd in coeffs]
+            elif self.mode == 'soft_threshold':
+                new_c = [(ca, self._soft_thresh(cd, self.soft_threshold_sigma)) for ca, cd in coeffs]
+            elif self.mode == 'zero_out_detail':
+                new_c = list(coeffs)
+                for i in range(max(0, len(coeffs) - self.finest_levels), len(coeffs)):
+                    ca, cd = new_c[i]
+                    cd = cd.copy()
+                    cd[np.random.rand(*cd.shape) < self.zero_out_ratio] = 0.0
+                    new_c[i] = (ca, cd)
+            elif self.mode == 'high_perturb':
+                scale = random.uniform(*self.high_perturb_noise_range)
+                new_c = [(ca, cd + np.random.randn(*cd.shape) * scale) for ca, cd in coeffs]
+            elif self.mode == 'band_scale':
+                new_c = []
+                for i, (ca, cd) in enumerate(coeffs):
+                    s_ca = ca * random.uniform(*self.band_scale_approx_range) if i == 0 else ca
+                    new_c.append((s_ca, cd * random.uniform(*self.band_scale_detail_range)))
+            else:
+                raise ValueError(f"Unknown SWT mode: {self.mode}")
+            rec = pywt.iswt(new_c, self.wavelet)
+            result[:, v] = rec[:T]
+        return result
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        device, dtype = x.device, x.dtype
+        x_np = x.cpu().numpy()
+        out = np.stack([self._apply_single(x_np[b]) for b in range(x_np.shape[0])], axis=0)
+        return torch.tensor(out, dtype=dtype, device=device)
+
+
+class MODWTAugmentation:
+    """
+    Maximal Overlap DWT augmentation (energy-normalised SWT, norm=True in pywt).
+    Shift-invariant and energy-preserving across levels.
+    Input is reflect-padded to the nearest multiple of 2**level.
+
+    Same modes as SWTAugmentation. x: [B, T, C]
+    """
+    def __init__(self, wavelet='db4', level=3, mode='zero_out_detail',
+                 soft_threshold_sigma=0.3, zero_out_ratio=0.3, finest_levels=1,
+                 high_perturb_noise_range=(0.03, 0.08),
+                 band_scale_approx_range=(0.9, 1.1),
+                 band_scale_detail_range=(0.6, 1.4)):
+        if not _HAS_PYWT:
+            raise ImportError("MODWTAugmentation requires pywt: pip install PyWavelets")
+        self.wavelet                  = wavelet
+        self.level                    = level
+        self.mode                     = mode
+        self.soft_threshold_sigma     = soft_threshold_sigma
+        self.zero_out_ratio           = zero_out_ratio
+        self.finest_levels            = finest_levels
+        self.high_perturb_noise_range = high_perturb_noise_range
+        self.band_scale_approx_range  = band_scale_approx_range
+        self.band_scale_detail_range  = band_scale_detail_range
+
+    def _soft_thresh(self, c, sigma):
+        threshold = sigma * np.abs(c).max() if c.size > 0 else 0.0
+        return np.sign(c) * np.maximum(np.abs(c) - threshold, 0.0)
+
+    def _pad(self, sig):
+        factor = 2 ** self.level
+        n = len(sig)
+        pad_len = factor * ((n + factor - 1) // factor)
+        if pad_len == n:
+            return sig
+        return np.pad(sig, (0, pad_len - n), mode='reflect')
+
+    def _apply_single(self, x_np):
+        T, C = x_np.shape
+        result = np.zeros_like(x_np)
+        for v in range(C):
+            sig = self._pad(x_np[:, v])
+            # norm=True → MODWT normalisation (divide by sqrt(2) per level)
+            coeffs = pywt.swt(sig, self.wavelet, level=self.level, trim_approx=False, norm=True)
+            if self.mode == 'low_pass':
+                new_c = [(ca, np.zeros_like(cd)) for ca, cd in coeffs]
+            elif self.mode == 'soft_threshold':
+                new_c = [(ca, self._soft_thresh(cd, self.soft_threshold_sigma)) for ca, cd in coeffs]
+            elif self.mode == 'zero_out_detail':
+                new_c = list(coeffs)
+                for i in range(max(0, len(coeffs) - self.finest_levels), len(coeffs)):
+                    ca, cd = new_c[i]
+                    cd = cd.copy()
+                    cd[np.random.rand(*cd.shape) < self.zero_out_ratio] = 0.0
+                    new_c[i] = (ca, cd)
+            elif self.mode == 'high_perturb':
+                scale = random.uniform(*self.high_perturb_noise_range)
+                new_c = [(ca, cd + np.random.randn(*cd.shape) * scale) for ca, cd in coeffs]
+            elif self.mode == 'band_scale':
+                new_c = []
+                for i, (ca, cd) in enumerate(coeffs):
+                    s_ca = ca * random.uniform(*self.band_scale_approx_range) if i == 0 else ca
+                    new_c.append((s_ca, cd * random.uniform(*self.band_scale_detail_range)))
+            else:
+                raise ValueError(f"Unknown MODWT mode: {self.mode}")
+            rec = pywt.iswt(new_c, self.wavelet, norm=True)
+            result[:, v] = rec[:T]
+        return result
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        device, dtype = x.device, x.dtype
+        x_np = x.cpu().numpy()
+        out = np.stack([self._apply_single(x_np[b]) for b in range(x_np.shape[0])], axis=0)
+        return torch.tensor(out, dtype=dtype, device=device)
+
+
 # ── TSDiNO-exclusive augmentations (batched) ──────────────────────────────────
 
 class PolarTransformation:

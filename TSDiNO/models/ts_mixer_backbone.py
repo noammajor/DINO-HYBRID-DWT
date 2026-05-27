@@ -71,7 +71,7 @@ class TSMixerForDINO(nn.Module):
         self.channel_independence = channel_independence
 
         configs = SimpleNamespace(
-            seq_len=seq_len,
+            seq_len=seq_len + 1,  # +1 for the CLS token prepended at the finest scale
             pred_len=0,          # required by PastDecomposableMixing; unused in encoder-only mode
             d_model=d_model, d_ff=d_ff, dropout=dropout,
             down_sampling_layers=down_sampling_layers,
@@ -105,9 +105,9 @@ class TSMixerForDINO(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         trunc_normal_(self.mask_token, std=0.02)
 
-        # Learnable CLS token — prepended to the finest-scale sequence before PDM.
-        # It acts as a global summary (like ViT CLS) and is used as the DINO representation
-        # instead of mean-pooling, which loses discriminative signal after RevIN.
+        # CLS token prepended at the finest scale BEFORE PDM blocks.
+        # Participates in all temporal mixing operations — bidirectional context,
+        # like PatchTST's CLS inside the transformer.
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         trunc_normal_(self.cls_token, std=0.02)
 
@@ -159,12 +159,11 @@ class TSMixerForDINO(nn.Module):
             out2_list.append(x_2)
         return (out1_list, out2_list)
 
-    def _embed_and_mix(self, x_list, mask_patches=None):
+    def _embed_and_mix(self, x_list, mask_patches=None, prepend_cls=False):
         """pre_enc → embed each scale → PDM blocks. Matches TimeMixer.Model.forecast().
 
-        x_list entries are already RevIN-normalised and CI-reshaped by _multi_scale_process.
-        pre_enc returns (season_list, trend_list); we embed from season_list (x_list[0]).
-
+        prepend_cls: if True, prepend the CLS token to the finest-scale embedding before PDM
+          so it participates in temporal mixing (used by forward() for DINO global token).
         mask_patches: bool tensor at finest-scale — True positions replaced with mask_token.
           CI=1: [B*C, T]   CI=0: [B, T]
         """
@@ -178,6 +177,10 @@ class TSMixerForDINO(nn.Module):
             if mask_patches is not None and scale_idx == 0:
                 mt = self.mask_token.expand(emb.shape[0], T, -1)
                 emb = torch.where(mask_patches.unsqueeze(-1), mt, emb)
+
+            if prepend_cls and scale_idx == 0:
+                cls = self.cls_token.expand(emb.shape[0], 1, self.d_model)
+                emb = torch.cat([cls, emb], dim=1)  # [B*C, T+1, d_model]
 
             enc_out_list.append(emb)
 
@@ -196,17 +199,11 @@ class TSMixerForDINO(nn.Module):
                   TSMultiCropWrapper reshapes this to [B*C, d_model] before DINOHead.
         """
         B = x.shape[0]
-        enc = self._embed_and_mix(self._multi_scale_process(x, normalize=False))
-        # enc[0]: [B*C, T, d_model]
-        # Attention-weighted pooling: cls_token acts as a learned global query.
-        # Different inputs attend to different timesteps → discriminative representations.
-        finest = enc[0]                                                 # [B*C, T, d_model]
-        BxC = finest.shape[0]
-        q = self.cls_token.expand(BxC, 1, self.d_model)                # [B*C, 1, d_model]
-        attn = torch.bmm(q, finest.transpose(1, 2)) / (self.d_model ** 0.5)  # [B*C, 1, T]
-        attn = F.softmax(attn, dim=-1)
-        global_rep = torch.bmm(attn, finest).squeeze(1)                # [B*C, d_model]
-        return global_rep.reshape(B, self.c_in, self.d_model)          # [B, C, d_model]
+        enc        = self._embed_and_mix(self._multi_scale_process(x, normalize=False),
+                                         prepend_cls=True)
+        # enc[0]: [B*C, T+1, d_model] — position 0 is the CLS token after PDM mixing
+        global_rep = enc[0][:, 0, :]                                     # [B*C, d_model]
+        return global_rep.reshape(B, self.c_in, self.d_model)            # [B, C, d_model]
 
     def forward_ibot(self, z: torch.Tensor, mask=None) -> torch.Tensor:
         """iBOT timestep encoding — TSMixer-native: each timestep is a token.
@@ -271,3 +268,39 @@ class TSMixerForDINO(nn.Module):
         returns: [B, T, C, d_model]
         """
         return self.forward_ibot(z, mask=None)
+
+
+class TSMixerForecastModel(nn.Module):
+    """Pretrained TSMixerForDINO backbone + linear forecasting head.
+
+    Exposes the same .backbone / .head interface expected by test_run() so the
+    existing optimizer, linear-probe freeze, and checkpoint-loading code works
+    without modification.
+
+    Forward (with RevIN, matching TimeMixer's own forecasting path):
+      1. _multi_scale_process(normalize=True)  — applies per-instance RevIN
+      2. _embed_and_mix                        — PDM blocks, finest scale [B*C, T, d_model]
+      3. Flatten + Linear head                 → [B*C, pred_len]
+      4. Reshape                               → [B, pred_len, C]
+      5. RevIN denorm via normalize_layers[0]  — restores original scale
+    """
+
+    def __init__(self, backbone: TSMixerForDINO, pred_len: int, head_dropout: float = 0.1):
+        super().__init__()
+        self.backbone = backbone
+        self.head = nn.Sequential(
+            nn.Dropout(head_dropout),
+            nn.Linear(backbone.seq_len * backbone.d_model, pred_len),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, T, C]  →  [B, pred_len, C]"""
+        B, T, C = x.shape
+        x_list = self.backbone._multi_scale_process(x, normalize=True)
+        enc    = self.backbone._embed_and_mix(x_list)
+        finest = enc[0]                                      # [B*C, T, d_model]
+        flat   = finest.reshape(B * C, -1)                   # [B*C, T*d_model]
+        pred   = self.head(flat)                             # [B*C, pred_len]
+        pred   = pred.reshape(B, C, -1).permute(0, 2, 1)    # [B, pred_len, C]
+        pred   = self.backbone.normalize_layers[0](pred, 'denorm')
+        return pred

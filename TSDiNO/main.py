@@ -665,6 +665,9 @@ class DataAugmentationDino:
         'hyperbolic_geom':  aug.HyperBolicGeometry,
     }
 
+    # 'soft' and 'hard' are convenience aliases for the most common teacher/student modes
+    _MODE_ALIASES = {'soft': 'soft_threshold', 'hard': 'high_perturb'}
+
     def _build_transforms(self, all_specs, dwt_cfg):
         transforms = []
         for spec in all_specs:
@@ -672,8 +675,37 @@ class DataAugmentationDino:
             per_type = {}
             for t in types:
                 if t.startswith('dwt_'):
-                    mode = t[4:]   # strip leading 'dwt_'
+                    raw_mode = t[4:]   # strip leading 'dwt_'
+                    mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
                     per_type[t] = aug.DWTAugmentation(
+                        wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
+                        level                    = spec.get('level',                      dwt_cfg['dwt_level']),
+                        mode                     = mode,
+                        soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
+                        zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
+                        finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
+                        high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
+                        band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
+                        band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
+                    )
+                elif t.startswith('swt_'):
+                    raw_mode = t[4:]   # strip leading 'swt_'
+                    mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
+                    per_type[t] = aug.SWTAugmentation(
+                        wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
+                        level                    = spec.get('level',                      dwt_cfg['dwt_level']),
+                        mode                     = mode,
+                        soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
+                        zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
+                        finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
+                        high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
+                        band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
+                        band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
+                    )
+                elif t.startswith('modwt_'):
+                    raw_mode = t[6:]   # strip leading 'modwt_'
+                    mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
+                    per_type[t] = aug.MODWTAugmentation(
                         wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
                         level                    = spec.get('level',                      dwt_cfg['dwt_level']),
                         mode                     = mode,
@@ -704,7 +736,8 @@ class DataAugmentationDino:
                         kwargs['shift_magnitude']= spec.get('shift_magnitude',dwt_cfg.get('hyperbolic_shift_magnitude', 0.3))
                     per_type[t] = cls(**kwargs)
                 else:
-                    raise ValueError(f"Unknown augmentation type '{t}'. DWT types must start with 'dwt_'. "
+                    raise ValueError(f"Unknown augmentation type '{t}'. "
+                                     f"DWT types must start with 'dwt_', SWT with 'swt_', MODWT with 'modwt_'. "
                                      f"Non-DWT types: {list(self._NON_DWT_REGISTRY)}")
             transforms.append(per_type)
         return transforms
@@ -807,24 +840,51 @@ def test_run(args):
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     _forecast_num_patch = _SEQ_LEN // args.patch_len   # 336 // 16 = 21
-    model = PatchTST(
-        c_in= args.c_in,
-        target_dim=args.pred_len,
-        patch_len=args.patch_len,
-        num_patch=_forecast_num_patch,
-        n_layers=args.n_layers,
-        n_heads=args.n_heads,
-        d_model=args.embed_dim,
-        shared_embedding=True,
-        d_ff=args.d_ff,
-        dropout=args.dropout,
-        head_dropout=getattr(args, 'head_dropout_forecasting', args.head_dropout),
-        act='leakyrelu',
-        head_type='prediction',
-        res_attention=False,
-        drop_path_rate=args.drop_path_rate,
-        step_size=1,
-        mlp_head=getattr(args, 'mlp_head', False),
+    _backbone_type = getattr(args, 'backbone_type', 'patchtst')
+
+    if _backbone_type == 'tsmixer':
+        from models.ts_mixer_backbone import TSMixerForDINO, TSMixerForecastModel
+        _tm_kwargs = dict(
+            c_in=args.c_in,
+            seq_len=_SEQ_LEN,
+            d_model=getattr(args, 'tsmixer_d_model', 128),
+            e_layers=getattr(args, 'tsmixer_e_layers', 3),
+            d_ff=getattr(args, 'tsmixer_d_ff', 256),
+            dropout=args.dropout,
+            patch_len=args.patch_len,
+            down_sampling_layers=getattr(args, 'tsmixer_down_sampling_layers', 3),
+            down_sampling_window=getattr(args, 'tsmixer_down_sampling_window', 2),
+            down_sampling_method=getattr(args, 'tsmixer_down_sampling_method', 'avg'),
+            decomp_method=getattr(args, 'tsmixer_decomp_method', 'moving_avg'),
+            moving_avg=getattr(args, 'tsmixer_moving_avg', 25),
+            top_k=getattr(args, 'tsmixer_top_k', 5),
+            use_norm=getattr(args, 'tsmixer_use_norm', 1),
+            channel_independence=getattr(args, 'tsmixer_channel_independence', 1),
+        )
+        model = TSMixerForecastModel(
+            backbone=TSMixerForDINO(**_tm_kwargs),
+            pred_len=args.pred_len,
+            head_dropout=getattr(args, 'head_dropout_forecasting', args.head_dropout),
+        )
+    else:
+        model = PatchTST(
+            c_in=args.c_in,
+            target_dim=args.pred_len,
+            patch_len=args.patch_len,
+            num_patch=_forecast_num_patch,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+            d_model=args.embed_dim,
+            shared_embedding=True,
+            d_ff=args.d_ff,
+            dropout=args.dropout,
+            head_dropout=getattr(args, 'head_dropout_forecasting', args.head_dropout),
+            act='leakyrelu',
+            head_type='prediction',
+            res_attention=False,
+            drop_path_rate=args.drop_path_rate,
+            step_size=1,
+            mlp_head=getattr(args, 'mlp_head', False),
         )
     criterion = nn.MSELoss()
     _lp_fore  = getattr(args, 'linear_probe', True)
@@ -860,8 +920,11 @@ def test_run(args):
             for key, value in state_dict.items():
                 # Remove 'module.' prefix (DistributedDataParallel)
                 new_key = key.replace('module.', '')
-                # Strip one 'backbone.' (TSMultiCropWrapper wrapper)
-                if new_key.startswith('backbone.'):
+                # PatchTST: checkpoint is TSMultiCropWrapper(PatchTST), so keys are
+                #   backbone.backbone.encoder.* — strip one 'backbone.' to match PatchTST.
+                # TSMixer: checkpoint is TSMultiCropWrapper(TSMixerForDINO), keys are
+                #   backbone.pdm_blocks.* which already matches TSMixerForecastModel.backbone.*
+                if _backbone_type != 'tsmixer' and new_key.startswith('backbone.'):
                     new_key = new_key[len('backbone.'):]
 
                 # Only load if key exists in forecasting model and shapes match
