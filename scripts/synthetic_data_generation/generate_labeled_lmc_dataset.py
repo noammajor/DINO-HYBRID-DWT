@@ -194,32 +194,44 @@ def main():
     parser.add_argument("--dirichlet-max-hi",   type=float, default=5.0)
     parser.add_argument("--ess-ls-min",         type=float, default=0.1)
     parser.add_argument("--ess-ls-max",         type=float, default=10.0)
+    parser.add_argument("--resume",             action="store_true",
+                        help="Resume from last checkpoint if output files already exist")
     args = parser.parse_args()
 
-    max_latent  = args.max_latent or args.num_channels
-    chunk_size  = args.chunk_size or args.jobs * 100
-    out_dir     = Path(args.output_dir)
+    max_latent       = args.max_latent or args.num_channels
+    chunk_size       = args.chunk_size or args.jobs * 100
+    out_dir          = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    x_gb             = args.num_samples * args.num_channels * FIXED_LENGTH * 4 / 1e9
 
-    # ── pre-allocate output files on disk via memmap ──────────────────────────
-    # np.lib.format.open_memmap writes a proper .npy header so np.load() works.
-    X_path = out_dir / "X.npy"
-    Y_path = out_dir / "Y.npy"
-    X_mm = np.lib.format.open_memmap(
-        X_path, mode="w+", dtype="float32",
-        shape=(args.num_samples, args.num_channels, FIXED_LENGTH),
-    )
-    Y_mm = np.lib.format.open_memmap(
-        Y_path, mode="w+", dtype="float32",
-        shape=(args.num_samples, Y_DIM),
-    )
+    X_path           = out_dir / "X.npy"
+    Y_path           = out_dir / "Y.npy"
+    checkpoint_path  = out_dir / "checkpoint.json"
 
-    x_gb = args.num_samples * args.num_channels * FIXED_LENGTH * 4 / 1e9
-    print(f"Pre-allocated  X.npy : {tuple(X_mm.shape)}  ({x_gb:.1f} GB on disk)")
-    print(f"Pre-allocated  Y.npy : {tuple(Y_mm.shape)}")
+    # ── open or create memmap files ───────────────────────────────────────────
+    start_from = 0
+    if args.resume and checkpoint_path.exists():
+        ckpt       = json.load(open(checkpoint_path))
+        start_from = ckpt["completed"]
+        X_mm = np.lib.format.open_memmap(X_path, mode="r+")
+        Y_mm = np.lib.format.open_memmap(Y_path, mode="r+")
+        print(f"Resuming from sample {start_from:,} / {args.num_samples:,}")
+    else:
+        X_mm = np.lib.format.open_memmap(
+            X_path, mode="w+", dtype="float32",
+            shape=(args.num_samples, args.num_channels, FIXED_LENGTH),
+        )
+        Y_mm = np.lib.format.open_memmap(
+            Y_path, mode="w+", dtype="float32",
+            shape=(args.num_samples, Y_DIM),
+        )
+        print(f"Pre-allocated  X.npy : {tuple(X_mm.shape)}  ({x_gb:.1f} GB on disk)")
+        print(f"Pre-allocated  Y.npy : {tuple(Y_mm.shape)}")
+
     print(f"Generating {args.num_samples:,} samples  |  {args.jobs} jobs  |  chunk {chunk_size:,}")
 
     # ── generate seeds once, deterministically ────────────────────────────────
+    # Seeds are derived from master seed, so resuming with same --seed is safe.
     master_rng = np.random.default_rng(args.seed)
     seeds      = master_rng.integers(0, 2**31, size=args.num_samples).tolist()
 
@@ -235,10 +247,11 @@ def main():
     )
 
     # ── chunked parallel generation → write directly to memmap ───────────────
-    with tqdm(total=args.num_samples, unit="sample") as pbar:
-        for start in range(0, args.num_samples, chunk_size):
-            end          = min(start + chunk_size, args.num_samples)
-            chunk_seeds  = seeds[start:end]
+    remaining = args.num_samples - start_from
+    with tqdm(total=args.num_samples, initial=start_from, unit="sample") as pbar:
+        for start in range(start_from, args.num_samples, chunk_size):
+            end         = min(start + chunk_size, args.num_samples)
+            chunk_seeds = seeds[start:end]
 
             results = Parallel(n_jobs=args.jobs, prefer="processes")(
                 delayed(generate_one)(s, **gen_kwargs) for s in chunk_seeds
@@ -250,6 +263,10 @@ def main():
 
             X_mm.flush()
             Y_mm.flush()
+
+            # save checkpoint after every chunk so resume is always safe
+            json.dump({"completed": end, "total": args.num_samples},
+                      open(checkpoint_path, "w"))
             pbar.update(end - start)
 
     # ── save metadata ─────────────────────────────────────────────────────────
@@ -291,9 +308,11 @@ def main():
     with open(out_dir / "dataset_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
+    checkpoint_path.unlink(missing_ok=True)  # clean up on successful completion
+
     print(f"\nDone. Files in {out_dir}/")
-    print(f"  X.npy : {tuple(X_mm.shape)}  ({x_gb:.1f} GB)")
-    print(f"  Y.npy : {tuple(Y_mm.shape)}")
+    print(f"  X.npy           : {tuple(X_mm.shape)}  ({x_gb:.1f} GB)")
+    print(f"  Y.npy           : {tuple(Y_mm.shape)}")
     print(f"  dataset_meta.json")
     print(f"\nLoad with:  X = np.load('X.npy', mmap_mode='r')")
 

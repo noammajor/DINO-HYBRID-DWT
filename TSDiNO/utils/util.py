@@ -106,8 +106,10 @@ class TSMultiCropWrapper(nn.Module):
 
     def forward(self, x):
         """
-        x: List of tensors. 
-           Each tensor is [bs x num_patch x n_vars x patch_len]
+        x: List of raw time-series tensors, each [bs x seq_len x n_vars].
+           Tensors are grouped by seq_len and concatenated along the batch dim
+           before being forwarded to the backbone.  The backbone is responsible
+           for any internal patching (PatchTST) or multi-scale processing (TSMixer).
         """
         if not isinstance(x, list):
             x = [x]

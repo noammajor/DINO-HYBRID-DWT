@@ -9,6 +9,7 @@ import random
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from models.patchTST import PatchTST, PatchReconDecoder
+from models.ts_mixer_backbone import TSMixerForDINO
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import time
@@ -146,43 +147,67 @@ def train_TS_DINO(args):
 
 
     #------------- Student - Teacher network ---------------
+    backbone_type = cfg.get('backbone_type', 'patchtst')
 
-    student = PatchTST(
-        c_in= args.c_in,
-        target_dim=args.pred_len,
-        patch_len=args.patch_len,
-        num_patch=args.num_patches,
-        n_layers=args.n_layers,
-        n_heads=args.n_heads,
-        d_model=args.embed_dim,
-        shared_embedding=True,
-        d_ff=args.d_ff,                        
-        dropout=args.dropout,
-        head_dropout=args.head_dropout,
-        act='gelu',
-        head_type='Dino',
-        res_attention=False,
-        drop_path_rate=args.drop_path_rate,
-        step_size=args.step_size
+    if backbone_type == 'tsmixer':
+        # TSMixer uses raw [B, T, C] — seq_len is the full window, no patching.
+        _seq_len = args.num_patches * args.patch_len
+        _tm_kwargs = dict(
+            c_in=args.c_in,
+            seq_len=_seq_len,
+            # Use TimeMixer's own architecture dims (independent of PatchTST's embed_dim)
+            d_model=cfg.get('tsmixer_d_model', 16),
+            e_layers=cfg.get('tsmixer_e_layers', 2),
+            d_ff=cfg.get('tsmixer_d_ff', 32),
+            dropout=args.dropout,
+            patch_len=args.patch_len,  # only used for patch-level pooling in forward_ibot/recon
+            down_sampling_layers=cfg.get('tsmixer_down_sampling_layers', 3),
+            down_sampling_window=cfg.get('tsmixer_down_sampling_window', 2),
+            down_sampling_method=cfg.get('tsmixer_down_sampling_method', 'avg'),
+            decomp_method=cfg.get('tsmixer_decomp_method', 'moving_avg'),
+            moving_avg=cfg.get('tsmixer_moving_avg', 25),
+            top_k=cfg.get('tsmixer_top_k', 5),
         )
-    teacher = PatchTST(
-        c_in= args.c_in,
-        target_dim=args.pred_len,
-        patch_len=args.patch_len,
-        num_patch=args.num_patches,
-        n_layers=args.n_layers,
-        n_heads=args.n_heads,
-        d_model=args.embed_dim,
-        shared_embedding=True,
-        d_ff=args.d_ff,                        
-        dropout=args.dropout,
-        head_dropout=args.head_dropout,
-        act='gelu',
-        head_type='Dino',
-        res_attention=False,
-        drop_path_rate=0.0,
-        step_size=args.step_size)
-    embed_dim = student.backbone.d_model
+        student = TSMixerForDINO(**_tm_kwargs)
+        teacher = TSMixerForDINO(**_tm_kwargs)
+        embed_dim = student.d_model
+    else:  # 'patchtst' (default)
+        student = PatchTST(
+            c_in= args.c_in,
+            target_dim=args.pred_len,
+            patch_len=args.patch_len,
+            num_patch=args.num_patches,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+            d_model=args.embed_dim,
+            shared_embedding=True,
+            d_ff=args.d_ff,
+            dropout=args.dropout,
+            head_dropout=args.head_dropout,
+            act='gelu',
+            head_type='Dino',
+            res_attention=False,
+            drop_path_rate=args.drop_path_rate,
+            step_size=args.step_size
+            )
+        teacher = PatchTST(
+            c_in= args.c_in,
+            target_dim=args.pred_len,
+            patch_len=args.patch_len,
+            num_patch=args.num_patches,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+            d_model=args.embed_dim,
+            shared_embedding=True,
+            d_ff=args.d_ff,
+            dropout=args.dropout,
+            head_dropout=args.head_dropout,
+            act='gelu',
+            head_type='Dino',
+            res_attention=False,
+            drop_path_rate=0.0,
+            step_size=args.step_size)
+        embed_dim = student.backbone.d_model
     student = utils.TSMultiCropWrapper(student, DINOHead(
         embed_dim,
         args.out_dim,
@@ -280,7 +305,9 @@ def train_TS_DINO(args):
     if use_mlm and student_mae_head is not None:
         params_groups.append({'params': student_mae_head.parameters()})
     if use_mlm:
-        params_groups.append({'params': [student_without_ddp.backbone.backbone.mask_token]})
+        _bbone = student_without_ddp.backbone
+        _mask_tok = _bbone.backbone.mask_token if hasattr(_bbone, 'backbone') else _bbone.mask_token
+        params_groups.append({'params': [_mask_tok]})
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)
     elif args.optimizer == "sgd":

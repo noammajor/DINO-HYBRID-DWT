@@ -160,10 +160,10 @@ def run_model_worker(model: str, encoder_layers: int, gpu: int,
 
                 # Return tuple shapes (when task="classify"):
                 #   dino / jepa / lejepa / patchtst / ntp : (..., ..., cls_acc, anom)
-                #   timedart                              : (best_pred, mse, mae, cls_acc, anom)
+                #   timedart / timemixer                  : (best_pred, mse, mae, cls_acc, anom)
                 #   any model in random-init / single-float fallback: cls_acc as float
                 if isinstance(result, tuple):
-                    cls_acc = result[3] if model == "timedart" else result[2]
+                    cls_acc = result[3] if model in ("timedart", "timemixer") else result[2]
                 else:
                     cls_acc = result
 
