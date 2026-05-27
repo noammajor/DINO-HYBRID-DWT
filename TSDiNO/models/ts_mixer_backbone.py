@@ -72,6 +72,7 @@ class TSMixerForDINO(nn.Module):
 
         configs = SimpleNamespace(
             seq_len=seq_len,
+            pred_len=0,          # required by PastDecomposableMixing; unused in encoder-only mode
             d_model=d_model, d_ff=d_ff, dropout=dropout,
             down_sampling_layers=down_sampling_layers,
             down_sampling_window=down_sampling_window,
