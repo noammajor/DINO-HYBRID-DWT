@@ -308,10 +308,6 @@ def train_TS_DINO(args):
         params_groups.append({'params': student_ibot_head.parameters()})
     if use_mlm and student_mae_head is not None:
         params_groups.append({'params': student_mae_head.parameters()})
-    if use_mlm:
-        _bbone = student_without_ddp.backbone
-        _mask_tok = _bbone.backbone.mask_token if hasattr(_bbone, 'backbone') else _bbone.mask_token
-        params_groups.append({'params': [_mask_tok]})
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)
     elif args.optimizer == "sgd":
