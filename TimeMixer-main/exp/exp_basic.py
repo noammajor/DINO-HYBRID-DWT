@@ -1,13 +1,16 @@
 import os
 import torch
-from models import TimeMixer
+from models import TimeMixer, Autoformer, FEDformer, DLinear
 
 
 class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
-            'TimeMixer': TimeMixer,
+            'TimeMixer':  TimeMixer,
+            'Autoformer': Autoformer,
+            'FEDformer':  FEDformer,
+            'DLinear':    DLinear,
         }
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)

@@ -3227,6 +3227,260 @@ def run_timemixer(skip_train: bool = False,
     return best_pred, best_mse, best_mae, cls_acc, anom_result
 
 
+# ── Autoformer / FEDformer / DLinear (TSLib supervised baselines) ─────────────
+
+def _run_tslib_forecast(
+    model_name: str,
+    cfg: dict,
+    forecast_dataset: str = None,
+    skip_train: bool = False,
+    pred_lens=None,
+    epochs: int = None,
+    encoder_layers: int = None,
+    embed_dim: int = None,
+    lr: float = None,
+    pretrain_only: bool = False,
+    pretrain_dataset: str = None,
+    classification_dataset=None,
+    anomaly_dataset=None,
+):
+    """Generic runner for any Exp_Long_Term_Forecast-compatible TSLib model."""
+    if pretrain_only:
+        print(f"[{model_name}] pretrain_only=True — supervised model, skipping.")
+        return
+
+    if pred_lens is None:
+        pred_lens = [96, 192, 336, 720]
+
+    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    shared_dir    = Path(__file__).parent / "shared"
+    _add_path(shared_dir)
+
+    import sys as _sys, importlib.util as _ilu, torch, types as _types
+    from types import SimpleNamespace
+    import numpy as _np
+
+    _tm_str = str(timemixer_dir)
+    if _tm_str not in _sys.path:
+        _sys.path.insert(0, _tm_str)
+    for _key in list(_sys.modules.keys()):
+        if _key in ('exp', 'models') or _key.startswith('exp.') or _key.startswith('models.'):
+            _sys.modules.pop(_key, None)
+
+    from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
+
+    if encoder_layers is not None: cfg['e_layers'] = encoder_layers
+    if embed_dim      is not None:
+        cfg['d_model'] = embed_dim
+        cfg['d_ff']    = embed_dim * 2
+    if lr             is not None: cfg['learning_rate'] = lr
+
+    _gpu_idx = 0
+    seq_len   = cfg['seq_len']
+    patch_len = cfg.get('patch_len', 16)
+    freq      = cfg.get('freq', 'h')
+    label_len = cfg.get('label_len', 0)
+
+    print(f"\n{'='*60}")
+    print(f"  MODEL: {model_name}  (supervised, no pretraining)")
+    print(f"  forecast: {forecast_dataset or '(none)'}")
+    print(f"  e_layers={cfg.get('e_layers','N/A')}  d_model={cfg.get('d_model','N/A')}  seq_len={seq_len}")
+    print(f"{'='*60}")
+
+    base_args = SimpleNamespace(
+        model                       = model_name,
+        task_name                   = 'long_term_forecast',
+        use_gpu                     = torch.cuda.is_available(),
+        gpu                         = _gpu_idx,
+        use_multi_gpu               = False,
+        devices                     = str(_gpu_idx),
+        device_ids                  = [_gpu_idx],
+        seq_len                     = seq_len,
+        label_len                   = label_len,
+        pred_len                    = 96,
+        enc_in                      = 1,
+        dec_in                      = 1,
+        c_out                       = 1,
+        d_model                     = cfg.get('d_model', 512),
+        n_heads                     = cfg.get('n_heads', 8),
+        e_layers                    = cfg.get('e_layers', 2),
+        d_layers                    = cfg.get('d_layers', 1),
+        d_ff                        = cfg.get('d_ff', 2048),
+        dropout                     = cfg.get('dropout', 0.05),
+        embed                       = freq,
+        freq                        = freq,
+        factor                      = cfg.get('factor', 1),
+        moving_avg                  = cfg.get('moving_avg', 25),
+        activation                  = cfg.get('activation', 'gelu'),
+        output_attention            = False,
+        data                        = 'custom',
+        root_path                   = '/tmp',
+        data_path                   = 'data.csv',
+        inverse                     = False,
+        checkpoints                 = str(Path(__file__).parent / 'outputs' / f'{model_name.lower()}_forecast'),
+        num_workers                 = cfg.get('num_workers', 4),
+        train_epochs                = epochs if epochs is not None else cfg.get('train_epochs', 10),
+        batch_size                  = cfg.get('batch_size', 32),
+        learning_rate               = cfg['learning_rate'],
+        patience                    = cfg.get('patience', 5),
+        lradj                       = cfg.get('lradj', 'TST'),
+        pct_start                   = cfg.get('pct_start', 0.2),
+        loss                        = cfg.get('loss', 'MSE'),
+        drop_last                   = cfg.get('drop_last', True),
+        use_amp                     = False,
+        modes                       = cfg.get('modes', 32),
+        mode_select                 = cfg.get('mode_select', 'random'),
+        features                    = cfg.get('features', 'M'),
+        # unused but avoids AttributeError in Exp_Long_Term_Forecast
+        channel_independence        = 1,
+        down_sampling_layers        = 0,
+        down_sampling_window        = 1,
+        down_sampling_method        = 'avg',
+        decomp_method               = 'moving_avg',
+        use_norm                    = 1,
+        use_future_temporal_feature = 0,
+        top_k                       = 5,
+        num_kernels                 = 6,
+    )
+
+    if forecast_dataset is not None:
+        from data_loaders.data_puller import PatchTSTForcastingAdapter
+
+        ds_info  = get_dataset_info(forecast_dataset)
+        _csv     = ds_info['csv_path']
+        _c_in    = ds_info['c_in']
+        _fc_bs   = cfg.get('batch_size_forecast', cfg.get('batch_size', 32))
+        _fc_nw   = cfg.get('num_workers', 4)
+        _n_epochs_fc = epochs if epochs is not None else cfg.get('train_epochs', 10)
+
+        best_mse, best_mae, best_pred = float('inf'), float('inf'), None
+
+        for pred_len in pred_lens:
+            def _fc_loader(split, _pl=pred_len):
+                ds = _FlatWindowAdapterTM(
+                    PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
+                    freq=freq)
+                return torch.utils.data.DataLoader(
+                    ds, batch_size=_fc_bs, shuffle=(split == 'train'),
+                    num_workers=_fc_nw, drop_last=True)
+
+            _tm_train = _fc_loader('train')
+            _tm_val   = _fc_loader('val')
+            _tm_test  = _fc_loader('test')
+
+            ft_args = SimpleNamespace(**vars(base_args))
+            ft_args.pred_len      = pred_len
+            ft_args.enc_in        = _c_in
+            ft_args.dec_in        = _c_in
+            ft_args.c_out         = _c_in
+            ft_args.train_epochs  = _n_epochs_fc
+            ft_args.batch_size    = _fc_bs
+
+            setting = (f"{model_name.lower()}_{forecast_dataset}_pl{pred_len}"
+                       f"_dm{cfg.get('d_model','na')}_el{cfg.get('e_layers','na')}")
+
+            print(f"\n[{model_name}] Forecasting pred_len={pred_len} on {forecast_dataset} …")
+
+            exp = Exp_Long_Term_Forecast(ft_args)
+
+            def _get_data(self, flag):
+                loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
+                return loader.dataset, loader
+            exp._get_data = _types.MethodType(_get_data, exp)
+
+            if not skip_train:
+                exp.train(setting)
+
+            # ── evaluate ──────────────────────────────────────────────────────
+            exp.model.eval()
+            preds_list, trues_list = [], []
+            _fdev = exp.device
+
+            with torch.no_grad():
+                for batch_x, batch_y, batch_x_mark, batch_y_mark in _tm_test:
+                    B = batch_x.shape[0]
+                    batch_x      = batch_x.float().to(_fdev)
+                    batch_y      = batch_y.float().to(_fdev)
+                    batch_x_mark = batch_x_mark.float().to(_fdev)
+
+                    if label_len > 0:
+                        # Encoder-decoder models: last label_len timesteps as decoder context
+                        dec_ctx   = batch_x[:, -label_len:, :]
+                        dec_zeros = torch.zeros(B, pred_len, _c_in, device=_fdev)
+                        dec_inp   = torch.cat([dec_ctx, dec_zeros], dim=1)
+                        mark_dim  = batch_x_mark.shape[-1]
+                        dec_mark  = torch.zeros(B, label_len + pred_len, mark_dim, device=_fdev)
+                    else:
+                        dec_inp  = None
+                        dec_mark = None
+
+                    outputs = exp.model(batch_x, batch_x_mark, dec_inp, dec_mark)
+                    outputs = outputs[:, -pred_len:, :]
+                    preds_list.append(outputs.detach().cpu().numpy())
+                    trues_list.append(batch_y[:, -pred_len:, :].detach().cpu().numpy())
+
+            exp.model.train()
+
+            preds_arr = _np.concatenate(preds_list, axis=0)
+            trues_arr = _np.concatenate(trues_list, axis=0)
+            mse = float(_np.mean((preds_arr - trues_arr) ** 2))
+            mae = float(_np.mean(_np.abs(preds_arr - trues_arr)))
+            print(f"  [{model_name}] pred_len={pred_len} → test MSE={mse:.4f}  MAE={mae:.4f}")
+
+            if mse < best_mse:
+                best_mse  = mse
+                best_mae  = mae
+                best_pred = pred_len
+
+        if best_pred is not None:
+            print(f"\n[{model_name}] Best: pred_len={best_pred}  MSE={best_mse:.4f}  MAE={best_mae:.4f}")
+
+
+def _load_tslib_cfg(config_filename: str) -> dict:
+    import importlib.util as _ilu
+    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    spec = _ilu.spec_from_file_location("_cfg", timemixer_dir / config_filename)
+    mod  = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return {**DATA_PATHS, **dict(mod.config)}
+
+
+def run_autoformer(skip_train: bool = False, pretrain_dataset: str = None,
+                   forecast_dataset: str = None, classification_dataset=None,
+                   anomaly_dataset=None, pretrain_only: bool = False,
+                   pred_lens=None, encoder_layers: int = None, lr: float = None,
+                   embed_dim: int = None, epochs: int = None, **_):
+    cfg = _load_tslib_cfg("config_autoformer.py")
+    _run_tslib_forecast('Autoformer', cfg, forecast_dataset=forecast_dataset,
+                        skip_train=skip_train, pred_lens=pred_lens, epochs=epochs,
+                        encoder_layers=encoder_layers, embed_dim=embed_dim, lr=lr,
+                        pretrain_only=pretrain_only)
+
+
+def run_fedformer(skip_train: bool = False, pretrain_dataset: str = None,
+                  forecast_dataset: str = None, classification_dataset=None,
+                  anomaly_dataset=None, pretrain_only: bool = False,
+                  pred_lens=None, encoder_layers: int = None, lr: float = None,
+                  embed_dim: int = None, epochs: int = None, **_):
+    cfg = _load_tslib_cfg("config_fedformer.py")
+    _run_tslib_forecast('FEDformer', cfg, forecast_dataset=forecast_dataset,
+                        skip_train=skip_train, pred_lens=pred_lens, epochs=epochs,
+                        encoder_layers=encoder_layers, embed_dim=embed_dim, lr=lr,
+                        pretrain_only=pretrain_only)
+
+
+def run_dlinear(skip_train: bool = False, pretrain_dataset: str = None,
+                forecast_dataset: str = None, classification_dataset=None,
+                anomaly_dataset=None, pretrain_only: bool = False,
+                pred_lens=None, encoder_layers: int = None, lr: float = None,
+                embed_dim: int = None, epochs: int = None, **_):
+    cfg = _load_tslib_cfg("config_dlinear.py")
+    _run_tslib_forecast('DLinear', cfg, forecast_dataset=forecast_dataset,
+                        skip_train=skip_train, pred_lens=pred_lens, epochs=epochs,
+                        encoder_layers=encoder_layers, embed_dim=embed_dim, lr=lr,
+                        pretrain_only=pretrain_only)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 RUNNERS = {
@@ -3242,6 +3496,9 @@ RUNNERS = {
     "timedart":        run_timedart,
     "softclt":         run_softclt,
     "timemixer":       run_timemixer,
+    "autoformer":      run_autoformer,
+    "fedformer":       run_fedformer,
+    "dlinear":         run_dlinear,
 }
 
 def run(model: str,

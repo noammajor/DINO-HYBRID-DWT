@@ -27,20 +27,24 @@ ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
 IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
-ALL_MODELS         = ["dino", "jepa", "lejepa", "patchtst", "ntp", "hybrid", "timedart", "timemixer"]
+ALL_MODELS         = ["dino", "jepa", "lejepa", "patchtst", "ntp", "hybrid", "timedart",
+                      "timemixer", "autoformer", "fedformer", "dlinear"]
 
-# TimeMixer is supervised (no pretrain phase) — skip_pretrain is forced True for it.
-SUPERVISED_MODELS  = {"timemixer"}
+# Supervised models train directly on forecasting — no pretrain phase, no checkpoint copy.
+SUPERVISED_MODELS  = {"timemixer", "autoformer", "fedformer", "dlinear"}
 
 MODEL_DEFAULT_LR = {
-    "dino":      5e-4,
-    "jepa":      5e-4,
-    "lejepa":    5e-4,
-    "patchtst":  5e-5,
-    "ntp":       5e-5,
-    "hybrid":    5e-4,
-    "timedart":  1e-4,
-    "timemixer": 1e-4,
+    "dino":        5e-4,
+    "jepa":        5e-4,
+    "lejepa":      5e-4,
+    "patchtst":    5e-5,
+    "ntp":         5e-5,
+    "hybrid":      5e-4,
+    "timedart":    1e-4,
+    "timemixer":   1e-4,
+    "autoformer":  1e-4,
+    "fedformer":   1e-4,
+    "dlinear":     5e-3,
 }
 
 _python = sys.executable
