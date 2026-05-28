@@ -148,13 +148,19 @@ class PatchTSTForcastingAdapter(Dataset):
     All split borders, normalization, and sliding windows are 100% identical
     to PatchTST's linear-probe setup.
 
-    seq_x  [seq_len, n_vars]   →  context_patches [context_size, patch_size, n_vars]
-    seq_y  [pred_len, n_vars]  →  target_patches  [h, patch_size, n_vars]
+    seq_x  [seq_len, n_vars]              →  context_patches [context_size, patch_size, n_vars]
+    seq_y  [label_len + pred_len, n_vars] →  target_patches  [label_len + h, patch_size, n_vars]
+
+    label_len (default 0): number of encoder-overlap timesteps prepended to seq_y.
+    Encoder-decoder models (Autoformer, FEDformer) need this warm-start context so
+    the decoder can initialize its trend/seasonal decomposition from real history.
+    PatchTST/TimeMixer leave it at 0.
 
     Requires seq_len % patch_size == 0 and pred_len % patch_size == 0.
     """
 
-    def __init__(self, csv_path: str, split: str, seq_len: int, pred_len: int, patch_size: int):
+    def __init__(self, csv_path: str, split: str, seq_len: int, pred_len: int, patch_size: int,
+                 label_len: int = 0):
         from pathlib import Path as _Path
         _patchtst_dir = str(_Path(__file__).parent.parent.parent / "PatchTST_self_supervised")
         if _patchtst_dir not in sys.path:
@@ -167,11 +173,12 @@ class PatchTSTForcastingAdapter(Dataset):
         self.patch_size   = patch_size
         self.context_size = seq_len  // patch_size
         self.h            = pred_len // patch_size
+        self.label_len    = label_len
 
         root      = os.path.dirname(os.path.abspath(csv_path))
         fname     = os.path.basename(csv_path)
         fname_low = fname.lower()
-        size      = [seq_len, 0, pred_len]  # label_len=0: target immediately follows context
+        size      = [seq_len, label_len, pred_len]
 
         if 'etth' in fname_low:
             self._ds = Dataset_ETT_hour(root, split=split, size=size, features='M', data_path=fname)
@@ -184,9 +191,11 @@ class PatchTSTForcastingAdapter(Dataset):
         return len(self._ds)
 
     def __getitem__(self, idx):
-        seq_x, seq_y = self._ds[idx]                                 # [seq_len, n_vars], [pred_len, n_vars]
-        ctx = seq_x.reshape(self.context_size, self.patch_size, -1)  # [context_size, patch_size, n_vars]
-        tgt = seq_y.reshape(self.h,            self.patch_size, -1)  # [h, patch_size, n_vars]
+        seq_x, seq_y = self._ds[idx]   # [seq_len, n_vars], [label_len + pred_len, n_vars]
+        ctx = seq_x.reshape(self.context_size, self.patch_size, -1)
+        # total target timesteps may include label_len prefix; divide by patch_size to get n patches
+        n_tgt_patches = seq_y.shape[0] // self.patch_size
+        tgt = seq_y.reshape(n_tgt_patches, self.patch_size, -1)
         return ctx, tgt
 
 

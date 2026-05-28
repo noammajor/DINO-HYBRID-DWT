@@ -2083,12 +2083,17 @@ class _FlatWindowAdapterTM(torch.utils.data.Dataset):
     Like _FlatWindowAdapter but produces zero time marks of the correct shape
     for TimeMixer's DataEmbedding_wo_pos (timeF encoding needs mark_dim features).
     Returns (seq_x, seq_y, xmark, ymark) where marks are zeros of shape [T, mark_dim].
+
+    When label_len > 0 (encoder-decoder models like Autoformer/FEDformer), seq_y is
+    prepended with the last label_len timesteps of seq_x, matching TSLib's dataloader
+    convention so that exp_long_term_forecasting.py's dec_inp construction works correctly.
     """
     _FREQ_DIM = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
 
-    def __init__(self, patched_ds, freq: str = 'h'):
+    def __init__(self, patched_ds, freq: str = 'h', label_len: int = 0):
         self._ds = patched_ds
         self._mark_dim = self._FREQ_DIM.get(freq, 4)
+        self._label_len = label_len
 
     def __len__(self):
         return len(self._ds)
@@ -2097,6 +2102,10 @@ class _FlatWindowAdapterTM(torch.utils.data.Dataset):
         ctx, tgt = self._ds[idx]
         seq_x = ctx.reshape(-1, ctx.shape[-1])   # [seq_len, C]
         seq_y = tgt.reshape(-1, tgt.shape[-1])   # [pred_len, C]
+        if self._label_len > 0:
+            # Prepend last label_len timesteps of encoder input so batch_y matches
+            # TSLib convention: batch_y[: label_len] == batch_x[-label_len:]
+            seq_y = torch.cat([seq_x[-self._label_len:], seq_y], dim=0)
         xmark = torch.zeros(seq_x.shape[0], self._mark_dim)
         ymark = torch.zeros(seq_y.shape[0], self._mark_dim)
         return seq_x, seq_y, xmark, ymark
@@ -3359,7 +3368,7 @@ def _run_tslib_forecast(
             def _fc_loader(split, _pl=pred_len):
                 ds = _FlatWindowAdapterTM(
                     PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
-                    freq=freq)
+                    freq=freq, label_len=label_len)
                 return torch.utils.data.DataLoader(
                     ds, batch_size=_fc_bs, shuffle=(split == 'train'),
                     num_workers=_fc_nw, drop_last=True)
