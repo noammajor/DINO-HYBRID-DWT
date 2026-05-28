@@ -3363,7 +3363,8 @@ def _run_tslib_forecast(
         for pred_len in pred_lens:
             def _fc_loader(split, _pl=pred_len):
                 ds = _FlatWindowAdapterTM(
-                    PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
+                    PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len,
+                                             label_len=label_len),
                     freq=freq, label_len=label_len)
                 return torch.utils.data.DataLoader(
                     ds, batch_size=_fc_bs, shuffle=(split == 'train'),
