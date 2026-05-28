@@ -153,12 +153,12 @@ config = {
 
     # ── Teacher view (global crop) ────────────────────────────────────────────
     "global_crops": [
-        {"type": "swt_soft", "crop_ratio": 1.0},
+        {"type": "modwt_soft", "crop_ratio": 1.0},
     ],
 
     # ── Student view (local crop) ─────────────────────────────────────────────
     "local_crops": [
-        {"type": "swt_hard", "crop_ratio": 1.0},
+        {"type": "modwt_hard", "crop_ratio": 1.0},
     ],
 
     # ── Patch reconstruction (MAE-style auxiliary loss) ────────────────────────
