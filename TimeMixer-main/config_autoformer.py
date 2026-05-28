@@ -7,7 +7,7 @@ config = {
     "d_model":        512,
     "d_ff":           2048,
     "n_heads":        8,
-    "factor":         1,
+    "factor":         3,
     "moving_avg":     25,
     "dropout":        0.05,
     "activation":     "gelu",
