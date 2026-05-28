@@ -2101,11 +2101,7 @@ class _FlatWindowAdapterTM(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         ctx, tgt = self._ds[idx]
         seq_x = ctx.reshape(-1, ctx.shape[-1])   # [seq_len, C]
-        seq_y = tgt.reshape(-1, tgt.shape[-1])   # [pred_len, C]
-        if self._label_len > 0:
-            # Prepend last label_len timesteps of encoder input so batch_y matches
-            # TSLib convention: batch_y[: label_len] == batch_x[-label_len:]
-            seq_y = torch.cat([seq_x[-self._label_len:], seq_y], dim=0)
+        seq_y = tgt.reshape(-1, tgt.shape[-1])   # [label_len + pred_len, C]  (label_len may be 0)
         xmark = torch.zeros(seq_x.shape[0], self._mark_dim)
         ymark = torch.zeros(seq_y.shape[0], self._mark_dim)
         return seq_x, seq_y, xmark, ymark
