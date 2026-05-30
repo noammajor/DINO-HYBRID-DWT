@@ -292,9 +292,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['output_dir'] = dino_cfg.get('output_dir', './checkpoints').rstrip('/') + f'{_src_tag}_layers{encoder_layers}{_outdim_tag}{_ckpt_tag}' + _SEED_TAG
     if num_patches is not None:
         dino_cfg['num_patches'] = num_patches
-        _cw = num_patches * dino_cfg.get('patch_len', 16)
-        _base = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
-        dino_cfg['output_dir'] = str(Path(_base).parent / 'classification' / (Path(_base).name + f'_cw{_cw}'))
+        if classification_dataset is not None:
+            _cw = num_patches * dino_cfg.get('patch_len', 16)
+            _base = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
+            dino_cfg['output_dir'] = str(Path(_base).parent / 'classification' / (Path(_base).name + f'_cw{_cw}'))
     if lr is not None:
         dino_cfg['lr'] = lr
     if warmup_epochs is not None:
