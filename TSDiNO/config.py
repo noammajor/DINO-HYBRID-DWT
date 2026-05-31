@@ -29,7 +29,7 @@ config = {
     "step_size": 16,    # stride between patches within window; window=(21-1)*16+16=336
     "window_step": 336, # stride between windows; =window_size for non-overlapping
     "num_patches": 21,  # window length in patches → 21×16 = 336 timesteps
-    "n_layers": 5,
+    "n_layers": 4,
     "n_heads": 16,
     "embed_dim": 128,
     "d_ff": 512,
@@ -63,7 +63,7 @@ config = {
     "freeze_last_layer": 1,
 
     # ── DINO pretraining ──────────────────────────────────────────────────────
-    "epochs": 20,
+    "epochs": 21,
 
     # ── DWT defaults (shared across all dwt_* aug types) ─────────────────────
     #
@@ -166,7 +166,7 @@ config = {
     # Teacher encoder sees full input    → reconstruction head.
     # Loss: MSE between the two reconstructions at masked positions.
     "use_reconstruction": False,   # set True to enable
-    "mlm_phi":        0.0,         # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
+    "mlm_phi":        0.6,         # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
     "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground truth
     "ibot_out_dim":   1024,        # iBOT patch head output dim — kept at out_dim for TSMixer (65536 OOMs with timestep tokens)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM
@@ -199,7 +199,7 @@ config = {
     # ── Backbone selection ────────────────────────────────────────────────────
     # "patchtst"  — transformer over non-overlapping patches (default)
     # "tsmixer"   — TimeMixer multi-scale season/trend mixing
-    "backbone_type": "patchtst",
+    "backbone_type": "tsmixer",
 
     # ── TSMixer-specific (only used when backbone_type = "tsmixer") ───────────
     # Values match TimeMixer's own config_timemixer.py defaults.
@@ -218,7 +218,7 @@ config = {
 
     # ── Pretraining data source ───────────────────────────────────────────────
     # pretrain_source: "monash" | "synthetic" | "monash+synthetic"
-    "pretrain_source":    "monash",
+    "pretrain_source":    "synthetic",
 
     # ── Distributed ───────────────────────────────────────────────────────────
     "dist_url": "env://",

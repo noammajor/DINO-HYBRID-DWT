@@ -9,7 +9,7 @@ DATA_PATHS = {
     # ── Pretraining ──────────────────────────────────────────────────────────
     "monash_data_dir":         "/home/shared/datasets/Monash",
     "monash_min_len":          512,
-    "synthetic_data_dir":      "/home/shared/datasets/synthetic_data_TS",     # .arrow files
+    "synthetic_data_dir":      "/home/shared/datasets/synthetic_data_TS_NEW",  # .arrow files
     "synthetic_mix_data_dir":  "/home/shared/datasets/synthetic_TS_Mix",      # smaller curated mix
     # ── Forecasting CSVs (consumed by dataset_registry) ──────────────────────
     "forecasting_data_dir":    "/home/shared/datasets/data - forecasting timeseries",
