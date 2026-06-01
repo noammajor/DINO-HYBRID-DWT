@@ -53,8 +53,8 @@ config = {
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     "optimizer": "adamw",           # "adamw" | "sgd"
-    "lr": 0.01,
-    "min_lr": 1e-5,
+    "lr": 0.001,
+    "min_lr": 1e-6,
     "warmup_epochs": 1,
     "weight_decay": 0.04,
     "weight_decay_end": 0.1,
