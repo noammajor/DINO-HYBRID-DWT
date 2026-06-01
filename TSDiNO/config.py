@@ -39,7 +39,7 @@ config = {
     "drop_path_rate": 0.1,
 
     # ── DINO head ─────────────────────────────────────────────────────────────
-    "out_dim": 4096,
+    "out_dim": 8192,
     "use_bn_in_head": False,
     "norm_last_layer": True,
 
@@ -168,7 +168,7 @@ config = {
     "use_reconstruction": False,   # set True to enable
     "mlm_phi":        0.6,         # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
     "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground truth
-    "ibot_out_dim":   4096,        # iBOT patch head output dim — kept at out_dim for TSMixer (65536 OOMs with timestep tokens)
+    "ibot_out_dim":   8192,        # iBOT patch head output dim — kept at out_dim for TSMixer (65536 OOMs with timestep tokens)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM
     "recon_mask_ratio":   0.4,    # fraction of patches to mask for student
     "recon_loss_weight":  1.0,    # weight of reconstruction loss relative to DINO loss
