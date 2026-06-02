@@ -355,7 +355,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(_HERE))
     sys.path.insert(0, str(_HERE.parent / "TSDiNO"))
 
-    from TSDiNO.config import config as _dino_cfg  # noqa: E402
+    from config import config as _dino_cfg  # noqa: E402
 
     p = argparse.ArgumentParser()
     p.add_argument("--data_dir",      required=True)
