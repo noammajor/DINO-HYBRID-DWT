@@ -40,12 +40,12 @@ Expected cfg keys:
 import os
 import sys
 import math
+
 from pathlib import Path
 from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
-from tqdm import tqdm
 
 # ── path setup ────────────────────────────────────────────────────────────────
 _HERE           = Path(__file__).parent
@@ -172,22 +172,21 @@ def _run_epoch(
     device:     torch.device,
     min_latent: int,
     training:   bool,
+    epoch:      int = 0,
 ) -> dict:
     """One full pass over loader. Returns mean per-head losses."""
     model.train(training)
-    ctx = torch.enable_grad() if training else torch.no_grad()
-
+    ctx      = torch.enable_grad() if training else torch.no_grad()
+    phase    = "train" if training else "eval"
+    n_total  = len(loader)
     totals   = {}
     n_batches = 0
 
     with ctx:
-        for x, y in tqdm(loader, desc="train" if training else "eval ", leave=False):
-            x = x.to(device, non_blocking=True)                        # [B, T, C]
+        for x, y in loader:
+            x = x.to(device, non_blocking=True)
             y = {k: v.to(device, non_blocking=True) for k, v in y.items()}
 
-            # Teacher forcing during training: pass ground-truth d_min / d_max
-            # so d_max and dirichlet heads learn without upstream prediction error.
-            # At eval, None triggers the detach-and-chain inference path.
             t_dmin = y["dirichlet_min"] if training else None
             t_dmax = y["dirichlet_max"] if training else None
 
@@ -204,6 +203,14 @@ def _run_epoch(
             for k, v in per_head.items():
                 totals[k] = totals.get(k, 0.0) + v
             n_batches += 1
+
+            batch_total = sum(per_head.values())
+            head_str    = "  ".join(f"{k}: {v:.4f}" for k, v in per_head.items())
+            print(
+                f"Epoch [{epoch}] [{phase}] [{n_batches}/{n_total}]  "
+                f"loss: {batch_total:.4f}  {head_str}",
+                flush=True,
+            )
 
     return {k: v / n_batches for k, v in totals.items()}
 
@@ -286,11 +293,11 @@ def train_lmc(cfg: dict):
     for epoch in range(1, epochs + 1):
         train_losses = _run_epoch(
             model, train_loader, optimizer, scheduler,
-            ce_loss, huber, device, min_latent, training=True,
+            ce_loss, huber, device, min_latent, training=True, epoch=epoch,
         )
         val_losses = _run_epoch(
             model, val_loader, None, None,
-            ce_loss, huber, device, min_latent, training=False,
+            ce_loss, huber, device, min_latent, training=False, epoch=epoch,
         )
 
         train_total = sum(train_losses.values())
