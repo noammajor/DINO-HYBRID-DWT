@@ -212,8 +212,9 @@ def _run_epoch(
 
 def train_lmc(cfg: dict):
     """Full training run."""
-    gpu    = cfg.get("gpu", 0)
-    device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() else "cpu")
+    # CUDA_VISIBLE_DEVICES is already set by the run script, so the target GPU
+    # is always visible as device 0 inside this process.
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     seed       = cfg.get("seed", 42)
     min_latent = cfg.get("min_latent", 2)
     max_latent = cfg.get("max_latent", 10)
