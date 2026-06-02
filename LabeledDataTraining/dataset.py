@@ -24,6 +24,7 @@ share them without copying the full dataset into RAM.
 
 import json
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 import torch
@@ -47,7 +48,7 @@ class LMCDataset(Dataset):
         indices   : optional subset of integer indices (for train/val/test splits)
     """
 
-    def __init__(self, data_dir: str | Path, indices=None):
+    def __init__(self, data_dir: Union[str, Path], indices=None):
         data_dir = Path(data_dir)
 
         # Open as memmaps — the OS pages in only the slices that are accessed,
@@ -90,7 +91,7 @@ class LMCDataset(Dataset):
 
 
 def make_loaders(
-    data_dir: str | Path,
+    data_dir: Union[str, Path],
     batch_size: int = 256,
     val_frac: float = 0.05,
     test_frac: float = 0.05,
