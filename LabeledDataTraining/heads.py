@@ -19,6 +19,7 @@ LMCLabelHead.forward() so the dependent heads are conditioned correctly.
 At inference leave them as None and predictions are chained.
 """
 
+from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -120,8 +121,8 @@ class LMCLabelHead(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        teacher_d_min: torch.Tensor | None = None,
-        teacher_d_max: torch.Tensor | None = None,
+        teacher_d_min: Optional[torch.Tensor] = None,
+        teacher_d_max: Optional[torch.Tensor] = None,
     ) -> dict[str, torch.Tensor]:
         """
         x             : (B, d_model)  encoder output embedding

@@ -21,6 +21,7 @@ Pipeline
 import sys
 import os
 
+from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -178,8 +179,8 @@ class LMCBackbone(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        teacher_d_min: torch.Tensor | None = None,
-        teacher_d_max: torch.Tensor | None = None,
+        teacher_d_min: Optional[torch.Tensor] = None,
+        teacher_d_max: Optional[torch.Tensor] = None,
     ) -> dict[str, torch.Tensor]:
         """
         x             : [B, T, C]
