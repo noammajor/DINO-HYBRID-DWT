@@ -55,43 +55,29 @@ for _p in [str(_HERE), str(_TIMEMIXER_ROOT), str(_TIMEMIXER_MODELS)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from TimeMixer import Model as TimeMixerModel  # noqa: E402  # type: ignore
+from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402  # type: ignore
 from backbone import LMCBackbone               # noqa: E402
 from dataset  import make_loaders              # noqa: E402
 
 
 # ── encoder construction ──────────────────────────────────────────────────────
 
-def _build_timemixer(cfg: dict) -> TimeMixerModel:
-    """Instantiate a full TimeMixer.Model and optionally load pretrained weights.
-
-    task_name='anomaly_detection' is used so TimeMixer builds only the minimal
-    encoder-side parameters; the task head (projection_layer) is never called.
-    """
-    configs = SimpleNamespace(
-        task_name                = 'anomaly_detection',
-        seq_len                  = cfg.get("seq_len", 512),
-        label_len                = 0,    # decoder field; unused in encoder path
-        pred_len                 = 0,    # decoder field; unused in encoder path
-        enc_in                   = cfg["c_in"],
-        c_out                    = cfg["c_in"],
-        d_model                  = cfg["tsmixer_d_model"],
-        d_ff                     = cfg["tsmixer_d_ff"],
-        e_layers                 = cfg["tsmixer_e_layers"],
-        dropout                  = cfg.get("dropout", 0.1),
-        embed                    = 'timeF',
-        freq                     = 'h',
-        down_sampling_layers     = cfg["tsmixer_down_sampling_layers"],
-        down_sampling_window     = cfg["tsmixer_down_sampling_window"],
-        down_sampling_method     = cfg["tsmixer_down_sampling_method"],
-        decomp_method            = cfg["tsmixer_decomp_method"],
-        moving_avg               = cfg["tsmixer_moving_avg"],
-        top_k                    = cfg["tsmixer_top_k"],
-        channel_independence     = 1,
-        use_norm                 = 1,
-        use_future_temporal_feature = 0,
+def _build_timemixer(cfg: dict) -> TSMixerForDINO:
+    """Instantiate TSMixerForDINO and optionally load pretrained weights."""
+    model = TSMixerForDINO(
+        c_in                 = cfg["c_in"],
+        seq_len              = cfg.get("seq_len", 512),
+        d_model              = cfg["tsmixer_d_model"],
+        e_layers             = cfg["tsmixer_e_layers"],
+        d_ff                 = cfg["tsmixer_d_ff"],
+        dropout              = cfg.get("dropout", 0.1),
+        down_sampling_layers = cfg["tsmixer_down_sampling_layers"],
+        down_sampling_window = cfg["tsmixer_down_sampling_window"],
+        down_sampling_method = cfg["tsmixer_down_sampling_method"],
+        decomp_method        = cfg["tsmixer_decomp_method"],
+        moving_avg           = cfg["tsmixer_moving_avg"],
+        top_k                = cfg["tsmixer_top_k"],
     )
-    model = TimeMixerModel(configs)
 
     ckpt_path = cfg.get("checkpoint_path")
     if ckpt_path and os.path.exists(ckpt_path):

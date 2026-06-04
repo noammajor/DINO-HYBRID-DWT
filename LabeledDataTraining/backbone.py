@@ -3,7 +3,7 @@ LMC label prediction backbone.
 
 Pipeline
 --------
-1. Frozen TimeMixer.Model encoder  → M-scale enc_out_list
+1. Frozen TSMixerForDINO encoder  → M-scale enc_out_list
    enc_out_list[k]: [B*C, T_k, d_model]
 2. Adaptive-avg-pool each scale over the time axis  → [B*C, d_model] per scale
    Stack  → [B*C, M, d_model]
@@ -24,18 +24,15 @@ import os
 from typing import Optional
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
 
-# Make TimeMixer importable.
-_TIMEMIXER_ROOT   = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'TimeMixer-main'))
-_TIMEMIXER_MODELS = os.path.join(_TIMEMIXER_ROOT, 'models')
-for _p in [_TIMEMIXER_ROOT, _TIMEMIXER_MODELS]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Make TSDiNO importable.
+_TSDINO = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'TSDiNO'))
+if _TSDINO not in sys.path:
+    sys.path.insert(0, _TSDINO)
 
-from TimeMixer import Model as TimeMixerModel  # noqa: E402
-from heads import (                             # noqa: E402
+from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402
+from heads import (                                   # noqa: E402
     LatentNumHead, PositiveHead, DirichletMaxHead, DirichletHead,
 )
 
@@ -63,7 +60,7 @@ class LMCBackbone(nn.Module):
 
     def __init__(
         self,
-        backbone: TimeMixerModel,
+        backbone: TSMixerForDINO,
         hidden_dim: int = 64,
         min_latent: int = 2,
         max_latent: int = 10,
@@ -77,8 +74,8 @@ class LMCBackbone(nn.Module):
             for p in backbone.parameters():
                 p.requires_grad_(False)
 
-        d = backbone.configs.d_model               # embedding dimension
-        M = backbone.configs.down_sampling_layers + 1  # finest + coarser scales
+        d = backbone.d_model
+        M = backbone.down_sampling_layers + 1
 
         self.d_model = d
         self.M       = M
@@ -112,50 +109,20 @@ class LMCBackbone(nn.Module):
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _encode_multiscale(self, x: torch.Tensor) -> torch.Tensor:
-        """Drive the frozen TimeMixer encoder and collapse into per-sample scale tokens.
+        """Run the frozen TSMixerForDINO encoder and collapse into per-sample scale tokens.
 
         x: [B, T, C]  →  [B, M, d_model]
 
-        Steps:
-          • multi-scale avg-pool  →  M × [B, T_k, C]
-          • CI=1 reshape  →  M × [B*C, T_k, 1]
-          • pre_enc + enc_embedding + PDM blocks  →  M × [B*C, T_k, d_model]
-          • mean over T_k  →  M × [B*C, d_model]
-          • stack + mean over C  →  [B, M, d_model]
+        Uses TSMixerForDINO's own _multi_scale_process + _embed_and_mix,
+        bypassing the CLS cross-attention (forward() is never called).
         """
         B, T, C = x.shape
-        cfg     = self.backbone.configs
-        dsw     = self.backbone.down_sampling_window  # downsampling stride
-
-        # ── multi-scale downsampling ───────────────────────────────────────────
-        # Replicates TimeMixer.Model.__multi_scale_process_inputs without the
-        # x_mark (timestamp features) which we don't use.
-        raw = [x]
-        xd  = x.permute(0, 2, 1)   # [B, C, T]
-        for _ in range(cfg.down_sampling_layers):
-            xd = F.avg_pool1d(xd, dsw)
-            raw.append(xd.permute(0, 2, 1))   # [B, T_k, C]
-
-        # ── CI=1: reshape each scale to [B*C, T_k, 1] ─────────────────────────
-        x_list = []
-        for xs in raw:
-            Bs, Tk, N = xs.shape
-            xs = xs.permute(0, 2, 1).contiguous().reshape(Bs * N, Tk, 1)
-            x_list.append(xs)
-
-        # ── pre_enc + embed ────────────────────────────────────────────────────
-        # pre_enc returns (x_list, None) for CI=1 (passthrough).
-        x_list_enc, _ = self.backbone.pre_enc(x_list)
-        enc_list = [self.backbone.enc_embedding(xs, None) for xs in x_list_enc]
-
-        # ── PDM blocks ────────────────────────────────────────────────────────
-        for pdm in self.backbone.pdm_blocks:
-            enc_list = pdm(enc_list)               # M × [B*C, T_k, d_model]
-
-        # ── pool over time, mean over channels ────────────────────────────────
-        pooled = [enc_k.mean(dim=1) for enc_k in enc_list]    # M × [B*C, d_model]
-        z = torch.stack(pooled, dim=1)                         # [B*C, M, d_model]
-        z = z.reshape(B, C, self.M, self.d_model).mean(dim=1)  # [B, M, d_model]
+        enc_list = self.backbone._embed_and_mix(
+            self.backbone._multi_scale_process(x, normalize=False)
+        )                                                          # M × [B*C, T_k, d_model]
+        pooled = [enc_k.mean(dim=1) for enc_k in enc_list]        # M × [B*C, d_model]
+        z = torch.stack(pooled, dim=1)                             # [B*C, M, d_model]
+        z = z.reshape(B, C, self.M, self.d_model).mean(dim=1)     # [B, M, d_model]
         return z
 
     def _head_attn(
