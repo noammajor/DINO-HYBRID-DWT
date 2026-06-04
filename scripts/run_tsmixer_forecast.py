@@ -44,7 +44,6 @@ def main():
             "--model",            "dino",
             "--task",             "forecast",
             "--forecast_dataset", dataset,
-            "--pretrain_dataset", dataset,
             "--backbone_type",    "tsmixer",
             "--encoder_layers",   "4",
             "--out_dim",          "8192",
