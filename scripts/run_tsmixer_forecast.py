@@ -21,7 +21,8 @@ sys.path.insert(0, str(ROOT))
 from Train_and_downstream import run  # noqa: E402
 
 DATASETS   = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
-CKPT_DIR   = str(ROOT / "checkpoints_synthetic_layers4_outdim8192_tsmixer")
+# Base path — run_dino appends _synthetic_layers4_outdim8192_tsmixer automatically.
+CKPT_BASE  = str(ROOT / "checkpoints")
 LOG_FOLDER = ROOT / "logs" / "Dino_TSMIXER_Regular_synthetic"
 
 
@@ -49,7 +50,7 @@ def main():
                     backbone_type    = "tsmixer",
                     encoder_layers   = 4,
                     out_dim          = 8192,
-                    output_dir       = CKPT_DIR,
+                    output_dir       = CKPT_BASE,
                     checkpoints      = ["best"],
                     epochs_forecasting = args.epochs_forecasting,
                 )
