@@ -48,7 +48,6 @@ def main():
             "--backbone_type",    "tsmixer",
             "--encoder_layers",   "4",
             "--out_dim",          "8192",
-            "--pretrain_source",  "synthetic",
             "--checkpoints",      "best",
         ]
         if args.epochs_forecasting:
