@@ -19,8 +19,9 @@ ROOT    = Path(__file__).resolve().parent.parent
 LOGS    = ROOT / "logs"
 SCRIPT  = ROOT / "Train_and_downstream.py"
 
-DATASETS  = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
-LOG_FOLDER = "Dino_TSMIXER_Regular_synthetic"
+DATASETS    = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
+LOG_FOLDER  = "Dino_TSMIXER_Regular_synthetic"
+CKPT_DIR    = "checkpoints_synthetic_layers4_outdim8192_tsmixer"
 
 
 def main():
@@ -47,6 +48,7 @@ def main():
             "--backbone_type",    "tsmixer",
             "--encoder_layers",   "4",
             "--out_dim",          "8192",
+            "--output_dir",       str(ROOT / CKPT_DIR),
             "--checkpoints",      "best",
         ]
         if args.epochs_forecasting:
