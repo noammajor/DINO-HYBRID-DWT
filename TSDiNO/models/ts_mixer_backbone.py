@@ -286,7 +286,7 @@ class TSMixerForecastModel(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.pred_len = pred_len
-        self.head = nn.Linear(backbone.d_model, pred_len)
+        self.head = nn.Linear(backbone.seq_len * backbone.d_model, pred_len)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, T, C]  →  [B, pred_len, C]"""
@@ -294,7 +294,7 @@ class TSMixerForecastModel(nn.Module):
         x_list = self.backbone._multi_scale_process(x, normalize=True)
         enc    = self.backbone._embed_and_mix(x_list)
         finest = enc[0]                                      # [B*C, T, d_model]
-        flat   = finest.mean(dim=1)                          # [B*C, d_model]  mean-pool over time
+        flat   = finest.reshape(B * C, -1)                   # [B*C, T*d_model]
         pred   = self.head(flat)                             # [B*C, pred_len]
         pred   = pred.reshape(B, C, -1).permute(0, 2, 1)    # [B, pred_len, C]
         return self.backbone.normalize_layers[0](pred, 'denorm')
