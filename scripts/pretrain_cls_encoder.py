@@ -15,6 +15,7 @@ Checkpoint locations:
 
 Usage:
     python pretrain_cls_encoder.py
+    python pretrain_cls_encoder.py --models dino --ckpt_tag tsmixer
     python pretrain_cls_encoder.py --models jepa lejepa
     python pretrain_cls_encoder.py --pretrain_source monash+synthetic
     python pretrain_cls_encoder.py --gpu_override 2
@@ -62,11 +63,14 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
                  log_dir: Path, dry_run: bool,
                  encoder_layers: int, predictor_layers: int,
                  num_patches: int, patch_size: int,
-                 log_tag: str = ""):
+                 log_tag: str = "",
+                 ckpt_tag: str = None,
+                 mlm_phi: float = None):
     lr = MODEL_LR[model]
     cw = num_patches * patch_size
+    ckpt_suffix = f"_{ckpt_tag}" if ckpt_tag else ""
     tag_suffix = f"_{log_tag}" if log_tag else ""
-    log_path = log_dir / f"{model}_layers{encoder_layers}_{pretrain_source}_cw{cw}{tag_suffix}.log"
+    log_path = log_dir / f"{model}{ckpt_suffix}_layers{encoder_layers}_{pretrain_source}_cw{cw}{tag_suffix}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -80,12 +84,18 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
         "--lr",               str(lr),
         "--pretrain_source",  pretrain_source,
     ]
+    if ckpt_tag is not None and model == "dino":
+        cmd += ["--ckpt_tag", ckpt_tag]
+    if mlm_phi is not None and model == "dino":
+        cmd += ["--mlm_phi", str(mlm_phi)]
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
+    ckpt_info = f"  ckpt_tag={ckpt_tag}" if ckpt_tag and model == "dino" else ""
+    mlm_info  = f"  mlm_phi={mlm_phi}"  if mlm_phi  is not None and model == "dino" else ""
     print(f"  [{model:12s}] GPU={gpu}  layers={encoder_layers}  "
-          f"num_patches={num_patches}  cw={cw}  lr={lr}"
+          f"num_patches={num_patches}  cw={cw}  lr={lr}{ckpt_info}{mlm_info}"
           f"  log={log_path.relative_to(ROOT)}")
 
     if dry_run:
@@ -107,9 +117,9 @@ def main():
     parser.add_argument("--models", nargs="+", default=ALL_MODELS,
                         choices=ALL_MODELS, metavar="MODEL",
                         help=f"Models to train (default: all). Choices: {ALL_MODELS}")
-    parser.add_argument("--pretrain_source", type=str, default="monash",
+    parser.add_argument("--pretrain_source", type=str, default="synthetic",
                         choices=["monash", "synthetic", "monash+synthetic"],
-                        help="Pre-training data source (default: monash)")
+                        help="Pre-training data source (default: synthetic)")
     parser.add_argument("--encoder_layers",   type=int, default=DEFAULT_ENCODER_LAYERS,
                         help=f"Encoder depth (default: {DEFAULT_ENCODER_LAYERS})")
     parser.add_argument("--predictor_layers", type=int, default=DEFAULT_PREDICTOR_LAYERS,
@@ -121,8 +131,12 @@ def main():
                              "actual patch size is set by each model's config file.")
     parser.add_argument("--gpu_override", type=int, default=None,
                         help="Run the task on this GPU (overrides per-model assignment).")
+    parser.add_argument("--ckpt_tag", type=str, default=None,
+                        help="Tag appended to the checkpoint dir name, e.g. 'tsmixer' → checkpoints_synthetic_layers8_tsmixer/ (dino only)")
     parser.add_argument("--log_tag", type=str, default="",
-                        help="Suffix appended to training log filename (e.g. 'physical_3' → dino_layers8_monash_cw1152_physical_3.log)")
+                        help="Extra suffix for the log filename only.")
+    parser.add_argument("--mlm_phi", type=float, default=None,
+                        help="MLM/iBOT loss weight for DINO (0.0 = pure DINO loss, default: from config)")
     parser.add_argument("--dry_run", action="store_true",
                         help="Print commands without running them")
     args = parser.parse_args()
@@ -138,6 +152,10 @@ def main():
     print(f"  patch_size      : {args.patch_size}")
     print(f"  models          : {args.models}")
     print(f"  pretrain_source : {args.pretrain_source}")
+    if args.ckpt_tag:
+        print(f"  ckpt_tag        : {args.ckpt_tag}  (dino only)")
+    if args.mlm_phi is not None:
+        print(f"  mlm_phi         : {args.mlm_phi}  (dino only)")
     if args.dry_run:
         print("  DRY RUN")
     print("=" * 60 + "\n")
@@ -150,7 +168,9 @@ def main():
                             predictor_layers=args.predictor_layers,
                             num_patches=args.num_patches,
                             patch_size=args.patch_size,
-                            log_tag=args.log_tag)
+                            log_tag=args.log_tag,
+                            ckpt_tag=args.ckpt_tag,
+                            mlm_phi=args.mlm_phi)
         if proc is not None:
             procs.append(proc)
 
