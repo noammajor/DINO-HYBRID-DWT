@@ -50,7 +50,7 @@ def main():
                     backbone_type    = "tsmixer",
                     encoder_layers   = 4,
                     out_dim          = 8192,
-                    output_dir       = CKPT_BASE,
+                    ckpt_tag         = "tsmixer_ibot",
                     checkpoints      = ["best"],
                     epochs_forecasting = args.epochs_forecasting,
                 )
