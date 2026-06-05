@@ -939,7 +939,7 @@ def test_run(args):
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=args.lr_forecasting,
         total_steps=args.epochs_forecasting * len(data_loader_forecasting_train),
-        pct_start=0.3, anneal_strategy='cos',
+        pct_start=0.05, anneal_strategy='cos',
     )
     if _lp_fore:
         for param in model.backbone.parameters():
