@@ -891,7 +891,7 @@ def test_run(args):
     _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore)
     if _lp_fore:
         optimizer = torch.optim.Adam(model.head.parameters(),
-                                     lr=_head_lr_fore, weight_decay=1e-4)
+                                     lr=_head_lr_fore, weight_decay=0.1)
     else:
         optimizer = torch.optim.Adam([
             {"params": model.head.parameters(),     "lr": _head_lr_fore},
@@ -936,10 +936,11 @@ def test_run(args):
             print(f"  Missing: {missing}")
             print(f"  Missing (new head): {len(missing)}  |  Unexpected (DINO head): {len(unexpected)}")
 
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr_forecasting,
-        total_steps=args.epochs_forecasting * len(data_loader_forecasting_train),
-        pct_start=0.05, anneal_strategy='cos',
+    _min_lr_fore = float(getattr(args, 'min_lr_forecasting', 2e-6))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=args.epochs_forecasting * len(data_loader_forecasting_train),
+        eta_min=_min_lr_fore,
     )
     if _lp_fore:
         for param in model.backbone.parameters():
