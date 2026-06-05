@@ -220,6 +220,7 @@ def run_dino(skip_train: bool = False,
              pretrain_source: str = None,
              checkpoint: str = None,
              num_patches: int = None,
+             seq_len: int = None,
              seed: int = None,
              linear_probe: bool = True,
              head_type: str = "linear",
@@ -290,6 +291,9 @@ def run_dino(skip_train: bool = False,
         _bbone = backbone_type or dino_cfg.get('backbone_type', 'patchtst')
         _ckpt_tag = f"_{ckpt_tag}" if ckpt_tag else (f"_{_bbone}" if _bbone == 'tsmixer' else '')
         dino_cfg['output_dir'] = dino_cfg.get('output_dir', './checkpoints').rstrip('/') + f'{_src_tag}_layers{encoder_layers}{_outdim_tag}{_ckpt_tag}' + _SEED_TAG
+    if seq_len is not None:
+        _patch_len = dino_cfg.get('patch_len', 16)
+        dino_cfg['num_patches'] = seq_len // _patch_len
     if num_patches is not None:
         dino_cfg['num_patches'] = num_patches
         if classification_dataset is not None:
@@ -3532,6 +3536,7 @@ def run(model: str,
         pretrain_source: str = None,
         gpu: int = None,
         num_patches: int = None,
+        seq_len: int = None,
         seed: int = None,
         pretrain_cls_model: bool = False,
         linear_probe: bool = True,
@@ -3629,6 +3634,7 @@ def run(model: str,
     if 'pretrain_source'        in sig.parameters: kwargs['pretrain_source']        = pretrain_source
     if 'gpu'                    in sig.parameters: kwargs['gpu']                    = gpu
     if 'num_patches'            in sig.parameters: kwargs['num_patches']            = num_patches
+    if 'seq_len'               in sig.parameters: kwargs['seq_len']               = seq_len
     if 'seed'                   in sig.parameters: kwargs['seed']                   = seed
     if 'pretrain_cls_model'     in sig.parameters: kwargs['pretrain_cls_model']     = pretrain_cls_model
     if 'linear_probe'           in sig.parameters: kwargs['linear_probe']           = linear_probe

@@ -147,6 +147,7 @@ def main():
                 pred_lens=args.pred_lens,
                 linear_probe=args.linear_probe,
                 epochs_forecasting=args.epochs_forecasting,
+                seq_len=512,      # LMC backbone was trained with seq_len=512
             )
         except Exception as exc:
             print(f"[ERROR] {dataset}: {exc}")
