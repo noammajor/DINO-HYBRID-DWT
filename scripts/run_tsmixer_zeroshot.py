@@ -63,7 +63,7 @@ def log_to_file(log_path: Path):
             sys.stdout = orig
 
 
-def eval_one(dataset: str, pred_len: int, gpu: int):
+def eval_one(dataset: str, pred_len: int, gpu: int, lr_forecasting: float = None):
     """Zero-shot forecasting for a single dataset/pred_len. Returns MSE or None."""
     log_path = LOG_FOLDER / dataset / f"pred{pred_len}.log"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
@@ -82,7 +82,7 @@ def eval_one(dataset: str, pred_len: int, gpu: int):
                 ckpt_tag         = "tsmixer",
                 checkpoints      = ["best"],
                 linear_probe     = True,
-                lr_forecasting   = args.lr_forecasting,
+                lr_forecasting   = lr_forecasting,
             )
             # run_dino returns (best_ckpt, best_mse, cls_acc, anom_result)
             if result is not None and result[1] is not None:
@@ -127,7 +127,7 @@ def main():
                 continue
 
             print(f"\n[{dataset}/pred{pred_len}]  log={LOG_FOLDER.relative_to(ROOT)}/{dataset}/pred{pred_len}.log")
-            mse = eval_one(dataset, pred_len, args.gpu)
+            mse = eval_one(dataset, pred_len, args.gpu, lr_forecasting=args.lr_forecasting)
 
             if mse is not None:
                 print(f"  → MSE={mse:.4f}")
