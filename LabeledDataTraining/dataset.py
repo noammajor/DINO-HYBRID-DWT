@@ -48,7 +48,7 @@ class LMCDataset(Dataset):
         indices   : optional subset of integer indices (for train/val/test splits)
     """
 
-    def __init__(self, data_dir: Union[str, Path], indices=None):
+    def __init__(self, data_dir: Union[str, Path], indices=None, seq_len: int = None):
         data_dir = Path(data_dir)
 
         # Open as memmaps — the OS pages in only the slices that are accessed,
@@ -62,6 +62,8 @@ class LMCDataset(Dataset):
 
         # indices lets callers pass a pre-computed split without copying data.
         self.indices = np.asarray(indices) if indices is not None else None
+        # If seq_len < T, truncate each sample to the first seq_len timesteps.
+        self.seq_len = seq_len
 
     def __len__(self) -> int:
         return len(self.indices) if self.indices is not None else len(self.X)
@@ -72,6 +74,8 @@ class LMCDataset(Dataset):
 
         # X: [C, T]  →  [T, C]  (backbone expects time-first)
         x = torch.from_numpy(self.X[real_idx].T.copy())   # [T, C]
+        if self.seq_len is not None:
+            x = x[:self.seq_len]                           # truncate to seq_len
 
         # Single from_numpy conversion for all 7 labels, then cheap tensor slicing.
         # 7 separate torch.tensor() calls per sample is ~7× the Python overhead.
@@ -97,6 +101,7 @@ def make_loaders(
     test_frac: float = 0.05,
     num_workers: int = 4,
     seed: int = 42,
+    seq_len: int = None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Split the dataset and return (train_loader, val_loader, test_loader).
 
@@ -112,7 +117,7 @@ def make_loaders(
         seed        : RNG seed for reproducible splitting
     """
     # Build a full-dataset index array and shuffle it once with a fixed seed.
-    full = LMCDataset(data_dir)
+    full = LMCDataset(data_dir, seq_len=seq_len)
     N    = len(full)
 
     rng     = np.random.default_rng(seed)
@@ -126,9 +131,9 @@ def make_loaders(
     val_idx   = perm[n_train : n_train + n_val]
     test_idx  = perm[n_train + n_val :]
 
-    train_ds = LMCDataset(data_dir, indices=train_idx)
-    val_ds   = LMCDataset(data_dir, indices=val_idx)
-    test_ds  = LMCDataset(data_dir, indices=test_idx)
+    train_ds = LMCDataset(data_dir, indices=train_idx, seq_len=seq_len)
+    val_ds   = LMCDataset(data_dir, indices=val_idx,   seq_len=seq_len)
+    test_ds  = LMCDataset(data_dir, indices=test_idx,  seq_len=seq_len)
 
     loader_kwargs = dict(
         batch_size  = batch_size,

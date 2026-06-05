@@ -42,6 +42,8 @@ def parse_args():
     p.add_argument("--saveckp_freq",  type=int,   default=1)
     p.add_argument("--gpu",           type=int,   default=0)
     p.add_argument("--seed",          type=int,   default=42)
+    p.add_argument("--output_dir",    type=str,   default=None,
+                   help="Override checkpoint output dir (default: from DINO config)")
     return p.parse_args()
 
 
@@ -70,6 +72,8 @@ def main():
     cfg["saveckp_freq"]      = args.saveckp_freq
     cfg["gpu"]               = args.gpu
     cfg["seed"]              = args.seed
+    if args.output_dir is not None:
+        cfg["output_dir"]      = args.output_dir
 
     print("=" * 60)
     print("  LMC Pretraining")

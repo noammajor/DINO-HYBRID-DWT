@@ -223,6 +223,7 @@ def train_lmc(cfg: dict):
     # ── data ──────────────────────────────────────────────────────────────────
     train_loader, val_loader, test_loader = make_loaders(
         data_dir    = cfg["data_dir_labeled"],
+        seq_len     = cfg.get("seq_len"),
         batch_size  = cfg.get("batch_size_labeled", 256),
         val_frac    = cfg.get("val_frac",  0.05),
         test_frac   = cfg.get("test_frac", 0.05),

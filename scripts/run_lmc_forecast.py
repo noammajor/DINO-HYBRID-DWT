@@ -149,7 +149,7 @@ def main():
                 pred_lens=args.pred_lens,
                 linear_probe=args.linear_probe,
                 epochs_forecasting=args.epochs_forecasting,
-                seq_len=512,          # LMC backbone was trained with seq_len=512
+                # seq_len not overridden → uses default 336 to match synthetic DINO eval
                 lr_forecasting=args.lr_forecasting,
             )
         except Exception as exc:
