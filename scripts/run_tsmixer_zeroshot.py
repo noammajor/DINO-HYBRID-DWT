@@ -82,6 +82,7 @@ def eval_one(dataset: str, pred_len: int, gpu: int):
                 ckpt_tag         = "tsmixer",
                 checkpoints      = ["best"],
                 linear_probe     = True,
+                lr_forecasting   = args.lr_forecasting,
             )
             # run_dino returns (best_ckpt, best_mse, cls_acc, anom_result)
             if result is not None and result[1] is not None:
@@ -94,9 +95,10 @@ def eval_one(dataset: str, pred_len: int, gpu: int):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--gpu",       type=int,   default=0)
-    p.add_argument("--datasets",  nargs="+",  default=DATASETS)
-    p.add_argument("--pred_lens", nargs="+",  type=int, default=PRED_LENS)
+    p.add_argument("--gpu",            type=int,   default=0)
+    p.add_argument("--datasets",       nargs="+",  default=DATASETS)
+    p.add_argument("--pred_lens",      nargs="+",  type=int, default=PRED_LENS)
+    p.add_argument("--lr_forecasting", type=float, default=None)
     args = p.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)

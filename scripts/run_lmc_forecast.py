@@ -94,8 +94,10 @@ def main():
     p.add_argument("--pred_lens",      nargs="+", type=int, default=PRED_LENS)
     p.add_argument("--linear_probe",   type=lambda x: x.lower() != "false", default=True,
                    help="True (freeze backbone, train head only) or False (fine-tune all)")
-    p.add_argument("--epochs_forecasting", type=int, default=None,
+    p.add_argument("--epochs_forecasting", type=int,   default=None,
                    help="Override forecast training epochs (default: from DINO config)")
+    p.add_argument("--lr_forecasting",    type=float, default=None,
+                   help="Override forecasting head learning rate (default: from DINO config)")
     p.add_argument("--out_csv",        type=str, default=None,
                    help="Results CSV path (default: results/lmc_forecast.csv)")
     args = p.parse_args()
@@ -147,7 +149,8 @@ def main():
                 pred_lens=args.pred_lens,
                 linear_probe=args.linear_probe,
                 epochs_forecasting=args.epochs_forecasting,
-                seq_len=512,      # LMC backbone was trained with seq_len=512
+                seq_len=512,          # LMC backbone was trained with seq_len=512
+                lr_forecasting=args.lr_forecasting,
             )
         except Exception as exc:
             print(f"[ERROR] {dataset}: {exc}")

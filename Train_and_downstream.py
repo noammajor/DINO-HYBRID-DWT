@@ -235,7 +235,8 @@ def run_dino(skip_train: bool = False,
              aug_local: str = None,
              mlm_phi: float = None,
              mlm_mode: str = None,
-             backbone_type: str = None):
+             backbone_type: str = None,
+             lr_forecasting: float = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
     _add_path(dino_dir)
@@ -323,6 +324,9 @@ def run_dino(skip_train: bool = False,
     if not (anomaly_dataset is not None and forecast_dataset is None):
         forecast_dataset = forecast_dataset or dino_cfg.get("forecast_dataset")
     dino_cfg["lr_forecasting"] = _get_forecast_lr(dino_cfg, "lr_forecasting")
+    if lr_forecasting is not None:
+        dino_cfg["lr_forecasting"] = lr_forecasting
+        dino_cfg["min_lr_forecasting"] = lr_forecasting / 10
     if pretrain_only and use_global_data:
         dino_cfg['saveckp_freq'] = 1  # save every epoch
 
@@ -3554,7 +3558,8 @@ def run(model: str,
         mlm_phi: float = None,
         mlm_mode: str = None,
         backbone_type: str = None,
-        phi: float = None):
+        phi: float = None,
+        lr_forecasting: float = None):
     """
     Unified entry point. Each run handles ONE task.
 
@@ -3654,6 +3659,7 @@ def run(model: str,
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
+    if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
 
 
