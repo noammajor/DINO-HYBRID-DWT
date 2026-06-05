@@ -63,7 +63,7 @@ def log_to_file(log_path: Path):
             sys.stdout = orig
 
 
-def eval_one(dataset: str, pred_len: int, gpu: int) -> float | None:
+def eval_one(dataset: str, pred_len: int, gpu: int):
     """Zero-shot forecasting for a single dataset/pred_len. Returns MSE or None."""
     log_path = LOG_FOLDER / dataset / f"pred{pred_len}.log"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
