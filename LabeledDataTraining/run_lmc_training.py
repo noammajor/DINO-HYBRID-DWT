@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "LabeledDataTraining"))
 sys.path.insert(0, str(ROOT / "TSDiNO"))
 
+# Cache models.ts_mixer_backbone from TSDiNO before LabelTraining.py
+# inserts TimeMixer-main/ into sys.path (which has a conflicting models/__init__.py).
+from models.ts_mixer_backbone import TSMixerForDINO as _TSMixerForDINO  # noqa
+
 from config import config as _dino_cfg  # noqa: E402
 from LabelTraining import train_lmc     # noqa: E402
 

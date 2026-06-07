@@ -58,8 +58,7 @@ for _p in [str(_HERE), str(_TIMEMIXER_ROOT), str(_TIMEMIXER_MODELS)]:
 # TSDiNO must come first so 'models.ts_mixer_backbone' resolves to TSDiNO/models/,
 # not TimeMixer-main/models/ which has its own __init__.py but no ts_mixer_backbone.
 _TSDINO = (_HERE / ".." / "TSDiNO").resolve()
-if str(_TSDINO) not in sys.path:
-    sys.path.insert(0, str(_TSDINO))
+sys.path.insert(0, str(_TSDINO))  # always first so models.ts_mixer_backbone beats TimeMixer-main/models/
 
 from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402  # type: ignore
 from backbone import LMCBackbone               # noqa: E402
