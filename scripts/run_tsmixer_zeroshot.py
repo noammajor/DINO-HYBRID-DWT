@@ -29,9 +29,11 @@ from Train_and_downstream import run  # noqa: E402
 
 DATASETS    = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
 PRED_LENS   = [96, 192, 336, 720]
-LOG_FOLDER  = ROOT / "logs" / "tsmixer_zeroshot"
-RESULTS_CSV = ROOT / "results" / "tsmixer_zeroshot.csv"
 FIELDNAMES  = ["dataset", "pred_len", "mse", "timestamp"]
+
+# These are set dynamically in main() based on --ckpt_tag
+LOG_FOLDER  = None
+RESULTS_CSV = None
 
 
 class _Tee:
@@ -63,7 +65,8 @@ def log_to_file(log_path: Path):
             sys.stdout = orig
 
 
-def eval_one(dataset: str, pred_len: int, gpu: int, lr_forecasting: float = None):
+def eval_one(dataset: str, pred_len: int, gpu: int,
+             lr_forecasting: float = None, ckpt_tag: str = "tsmixer"):
     """Zero-shot forecasting for a single dataset/pred_len. Returns MSE or None."""
     log_path = LOG_FOLDER / dataset / f"pred{pred_len}.log"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
@@ -79,7 +82,7 @@ def eval_one(dataset: str, pred_len: int, gpu: int, lr_forecasting: float = None
                 encoder_layers   = 4,
                 out_dim          = 8192,
                 pretrain_source  = "synthetic",
-                ckpt_tag         = "tsmixer",
+                ckpt_tag         = ckpt_tag,
                 checkpoints      = ["best"],
                 linear_probe     = True,
                 lr_forecasting   = lr_forecasting,
@@ -99,7 +102,13 @@ def main():
     p.add_argument("--datasets",       nargs="+",  default=DATASETS)
     p.add_argument("--pred_lens",      nargs="+",  type=int, default=PRED_LENS)
     p.add_argument("--lr_forecasting", type=float, default=None)
+    p.add_argument("--ckpt_tag",       type=str,   default="tsmixer",
+                   help="Checkpoint tag: tsmixer | tsmixer_ibot | tsmixer_mae (default: tsmixer)")
     args = p.parse_args()
+
+    global LOG_FOLDER, RESULTS_CSV
+    LOG_FOLDER  = ROOT / "logs"    / f"tsmixer_zeroshot_{args.ckpt_tag}"
+    RESULTS_CSV = ROOT / "results" / f"tsmixer_zeroshot_{args.ckpt_tag}.csv"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     LOG_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -127,7 +136,8 @@ def main():
                 continue
 
             print(f"\n[{dataset}/pred{pred_len}]  log={LOG_FOLDER.relative_to(ROOT)}/{dataset}/pred{pred_len}.log")
-            mse = eval_one(dataset, pred_len, args.gpu, lr_forecasting=args.lr_forecasting)
+            mse = eval_one(dataset, pred_len, args.gpu,
+                           lr_forecasting=args.lr_forecasting, ckpt_tag=args.ckpt_tag)
 
             if mse is not None:
                 print(f"  → MSE={mse:.4f}")
