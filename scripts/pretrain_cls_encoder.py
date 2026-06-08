@@ -65,7 +65,8 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
                  num_patches: int, patch_size: int,
                  log_tag: str = "",
                  ckpt_tag: str = None,
-                 mlm_phi: float = None):
+                 mlm_phi: float = None,
+                 mlm_mode: str = None):
     lr = MODEL_LR[model]
     cw = num_patches * patch_size
     ckpt_suffix = f"_{ckpt_tag}" if ckpt_tag else ""
@@ -88,12 +89,15 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
         cmd += ["--ckpt_tag", ckpt_tag]
     if mlm_phi is not None and model == "dino":
         cmd += ["--mlm_phi", str(mlm_phi)]
+    if mlm_mode is not None and model == "dino":
+        cmd += ["--mlm_mode", mlm_mode]
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
     ckpt_info = f"  ckpt_tag={ckpt_tag}" if ckpt_tag and model == "dino" else ""
     mlm_info  = f"  mlm_phi={mlm_phi}"  if mlm_phi  is not None and model == "dino" else ""
+    mlm_info += f"  mlm_mode={mlm_mode}" if mlm_mode is not None and model == "dino" else ""
     print(f"  [{model:12s}] GPU={gpu}  layers={encoder_layers}  "
           f"num_patches={num_patches}  cw={cw}  lr={lr}{ckpt_info}{mlm_info}"
           f"  log={log_path.relative_to(ROOT)}")
@@ -170,7 +174,8 @@ def main():
                             patch_size=args.patch_size,
                             log_tag=args.log_tag,
                             ckpt_tag=args.ckpt_tag,
-                            mlm_phi=args.mlm_phi)
+                            mlm_phi=args.mlm_phi,
+                            mlm_mode=args.mlm_mode)
         if proc is not None:
             procs.append(proc)
 
