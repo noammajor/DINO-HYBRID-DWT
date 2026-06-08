@@ -124,7 +124,7 @@ def main():
                 existing.add((row["dataset"], int(row["pred_len"])))
 
     print(f"TSMixer zero-shot forecast")
-    print(f"  Checkpoint : checkpoints_synthetic_layers4_outdim8192_tsmixer/checkpoint_best.pth")
+    print(f"  Checkpoint : checkpoints_synthetic_layers4_outdim8192_{args.ckpt_tag}/checkpoint_best.pth")
     print(f"  Datasets   : {args.datasets}")
     print(f"  Pred lens  : {args.pred_lens}")
     print(f"  GPU        : {args.gpu}")
