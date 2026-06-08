@@ -175,7 +175,7 @@ config = {
 
     # ── Downstream: Forecasting ───────────────────────────────────────────────
     "pred_len": 96,
-    "epochs_forecasting": 50,
+    "epochs_forecasting": 30,
     "lr_forecasting": 2e-5,
     "min_lr_forecasting": 2e-6,
     "batch_size_forecast": 128,
