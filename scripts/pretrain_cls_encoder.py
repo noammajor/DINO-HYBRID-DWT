@@ -141,6 +141,8 @@ def main():
                         help="Extra suffix for the log filename only.")
     parser.add_argument("--mlm_phi", type=float, default=None,
                         help="MLM/iBOT loss weight for DINO (0.0 = pure DINO loss, default: from config)")
+    parser.add_argument("--mlm_mode", type=str, default=None,
+                        help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth) (dino only)")
     parser.add_argument("--dry_run", action="store_true",
                         help="Print commands without running them")
     args = parser.parse_args()
