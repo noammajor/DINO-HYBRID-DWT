@@ -85,10 +85,10 @@ config = {
     # Pools to try:  sym-only ['sym4','sym6','sym8'] | mixed ['sym4','sym6','db4','db6'] | None (fixed)
     "dwt_wavelet_pool":             ['sym4', 'sym6', 'sym8', 'db4', 'db6'],  # random per sample: sym* (low phase distortion) + db* (higher phase distortion)
     "dwt_level":                    3,              # try: 2, 3, 4
-    "dwt_soft_threshold_sigma":     0.3,            # try: 0.1, 0.3, 0.5
-    "dwt_zero_out_ratio":           0.4,            # bumped: 0.3 → 0.4
-    "dwt_finest_levels":            2,              # bumped: 1 → 2 (perturb two finest bands)
-    "dwt_high_perturb_noise_range": (0.05, 0.12),  # bumped: (0.03,0.08) → (0.05,0.12)
+    "dwt_soft_threshold_sigma":     0.6,            # bumped: 0.3 → 0.6 (more aggressive teacher smoothing)
+    "dwt_zero_out_ratio":           0.4,
+    "dwt_finest_levels":            3,              # bumped: 2 → 3 (student perturbs three finest bands)
+    "dwt_high_perturb_noise_range": (0.25, 0.50),  # bumped: (0.05,0.12) → (0.25,0.50) — was invisible on standardised data
     "dwt_band_scale_approx_range":  (0.80, 1.20),  # wider: (0.9,1.1) → (0.80,1.20)
     "dwt_band_scale_detail_range":  (0.40, 1.60),  # wider: (0.6,1.4) → (0.40,1.60)
 
@@ -157,12 +157,12 @@ config = {
 
     # ── Teacher view (global crop) ────────────────────────────────────────────
     "global_crops": [
-        {"type": "modwt_soft", "crop_ratio": 1.0},
+        {"type": "dwt_low_pass", "crop_ratio": 1.0},
     ],
 
     # ── Student view (local crop) ─────────────────────────────────────────────
     "local_crops": [
-        {"type": "modwt_hard", "crop_ratio": 1.0},
+        {"type": "dwt_hard", "crop_ratio": 1.0},
     ],
 
     # ── Patch reconstruction (MAE-style auxiliary loss) ────────────────────────
