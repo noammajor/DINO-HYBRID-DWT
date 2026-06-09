@@ -25,6 +25,7 @@ import argparse
 import csv
 import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,8 @@ PRED_LENS = [96, 192, 336, 720]
 
 # Where the converted checkpoint is written (must stay stable across datasets
 # because run() uses this as output_dir).
-CKPT_DIR = ROOT / "checkpoints_lmc_forecast"
+CKPT_DIR   = ROOT / "checkpoints_lmc_forecast"
+LOG_FOLDER = ROOT / "logs" / "lmc_forecast"
 
 
 def _convert_lmc_to_dino(lmc_ckpt_path: str) -> tuple[dict, dict]:
@@ -67,12 +69,7 @@ def _convert_lmc_to_dino(lmc_ckpt_path: str) -> tuple[dict, dict]:
 
 
 def _warn_arch_mismatch(lmc_cfg: dict) -> None:
-    """Print a warning if the LMC architecture differs from the DINO config defaults.
-
-    The DINO forecasting pipeline reads tsmixer_e_layers from args (defaults to 3).
-    If the LMC backbone was trained with a different layer count the weights will
-    still load (strict=False) but only the matching layers will be initialised.
-    """
+    """Print a warning if the LMC architecture differs from the DINO config defaults."""
     lmc_layers = lmc_cfg.get("tsmixer_e_layers")
     if lmc_layers is not None and lmc_layers != 3:
         print(
@@ -81,6 +78,40 @@ def _warn_arch_mismatch(lmc_cfg: dict) -> None:
             f"layers will be loaded.  To fix, update TSDiNO/config.py: "
             f"'tsmixer_e_layers': {lmc_layers}."
         )
+
+
+# ── logging: tee stdout to file ───────────────────────────────────────────────
+
+class _Tee:
+    def __init__(self, original, file_handle):
+        self._orig = original
+        self._file = file_handle
+
+    def write(self, data):
+        self._orig.write(data)
+        self._orig.flush()
+        self._file.write(data)
+        self._file.flush()
+
+    def flush(self):
+        self._orig.flush()
+        self._file.flush()
+
+    def fileno(self):
+        return self._orig.fileno()
+
+
+@contextmanager
+def log_to_file(log_path: Path):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as fh:
+        fh.write(f"# started {datetime.now().isoformat(timespec='seconds')}\n\n")
+        orig = sys.stdout
+        sys.stdout = _Tee(orig, fh)
+        try:
+            yield
+        finally:
+            sys.stdout = orig
 
 
 def main():
@@ -122,57 +153,61 @@ def main():
     print(f"  Saved DINO-format checkpoint → {converted_path}")
 
     # ── forecast loop ─────────────────────────────────────────────────────────
-    # LMC backbone was trained with normalize=False — disable RevIN so
-    # training and inference see the same input distribution.
-    os.environ["LMC_NO_REVIN"] = "1"
-
     from Train_and_downstream import run
 
     out_csv = Path(args.out_csv) if args.out_csv else ROOT / "results" / "lmc_forecast.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
+    LOG_FOLDER.mkdir(parents=True, exist_ok=True)
 
-    fieldnames = ["dataset", "pred_len", "mse", "timestamp"]
+    fieldnames = ["dataset", "pred_len", "mse", "mae", "timestamp"]
     rows: list[dict] = []
 
     for dataset in args.datasets:
         print(f"\n{'='*60}")
         print(f"  LMC Forecast — {dataset}")
         print(f"{'='*60}")
-        try:
-            # output_dir is passed as the exact final path.
-            # encoder_layers is NOT passed so run_dino does NOT append a suffix
-            # like _layers{N}_outdim{D}_tsmixer — the checkpoint sits exactly in
-            # CKPT_DIR/checkpoint_best.pth as saved above.
-            result = run(
-                model="dino",
-                skip_train=True,
-                forecast_dataset=dataset,
-                backbone_type="tsmixer",
-                checkpoints=["best"],
-                output_dir=str(CKPT_DIR),
-                pred_lens=args.pred_lens,
-                linear_probe=args.linear_probe,
-                epochs_forecasting=args.epochs_forecasting,
-                # seq_len not overridden → uses default 336 to match synthetic DINO eval
-                lr_forecasting=args.lr_forecasting,
-            )
-        except Exception as exc:
-            print(f"[ERROR] {dataset}: {exc}")
-            import traceback; traceback.print_exc()
-            continue
 
-        # result = (best_ckpt, best_mse, cls_acc, anom_result)
-        if result is not None and result[1] is not None:
-            print(f"  → MSE={result[1]:.6f}")
-            ts = datetime.now().isoformat(timespec="seconds")
-            rows.append({"dataset": dataset, "pred_len": "best", "mse": f"{result[1]:.6f}", "timestamp": ts})
+        for pred_len in args.pred_lens:
+            log_path = LOG_FOLDER / f"{dataset}_pred{pred_len}.log"
+            print(f"  pred_len={pred_len}  log={log_path.relative_to(ROOT)}")
 
-    # ── save CSV ──────────────────────────────────────────────────────────────
+            mse = None
+            with log_to_file(log_path):
+                try:
+                    result = run(
+                        model="dino",
+                        skip_train=True,
+                        forecast_dataset=dataset,
+                        backbone_type="tsmixer",
+                        checkpoints=["best"],
+                        output_dir=str(CKPT_DIR),
+                        pred_lens=[pred_len],
+                        linear_probe=args.linear_probe,
+                        epochs_forecasting=args.epochs_forecasting,
+                        lr_forecasting=args.lr_forecasting,
+                    )
+                    if result is not None and result[1] is not None:
+                        mse = result[1]
+                except Exception as exc:
+                    print(f"[ERROR] {dataset}/pred{pred_len}: {exc}")
+                    import traceback; traceback.print_exc()
+
+            if mse is not None:
+                print(f"  → pred_len={pred_len}  MSE={mse:.6f}")
+                ts = datetime.now().isoformat(timespec="seconds")
+                rows.append({
+                    "dataset":  dataset,
+                    "pred_len": pred_len,
+                    "mse":      f"{mse:.6f}",
+                    "mae":      "N/A",
+                    "timestamp": ts,
+                })
+                with open(out_csv, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+
     if rows:
-        with open(out_csv, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
         print(f"\nResults saved → {out_csv}")
     else:
         print("\nNo results to save.")

@@ -803,12 +803,12 @@ def test_run(args):
     else:
         _DS_CLS = Dataset_Custom
 
-    dataset_forecasting_train = _DS_CLS(_root, split='train', size=_size, features='M', data_path=_fname)
+    dataset_forecasting_train = _DS_CLS(_root, split='train', size=_size, features='M', data_path=_fname, scale=True)
     try:
-        dataset_forecasting_val = _DS_CLS(_root, split='val', size=_size, features='M', data_path=_fname)
+        dataset_forecasting_val = _DS_CLS(_root, split='val', size=_size, features='M', data_path=_fname, scale=True)
     except Exception:
         dataset_forecasting_val = None
-    dataset_forecasting_test  = _DS_CLS(_root, split='test',  size=_size, features='M', data_path=_fname)
+    dataset_forecasting_test  = _DS_CLS(_root, split='test',  size=_size, features='M', data_path=_fname, scale=True)
 
     _is_distributed = utils.is_dist_avail_and_initialized()
     data_loader_forecasting_train = torch.utils.data.DataLoader(
