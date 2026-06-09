@@ -282,19 +282,22 @@ class TSMixerForecastModel(nn.Module):
       5. RevIN denorm
     """
 
-    def __init__(self, backbone: TSMixerForDINO, pred_len: int):
+    def __init__(self, backbone: TSMixerForDINO, pred_len: int, use_revin: bool = True):
         super().__init__()
-        self.backbone = backbone
-        self.pred_len = pred_len
+        self.backbone  = backbone
+        self.pred_len  = pred_len
+        self.use_revin = use_revin
         self.head = nn.Linear(backbone.seq_len * backbone.d_model, pred_len)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, T, C]  →  [B, pred_len, C]"""
         B, T, C = x.shape
-        x_list = self.backbone._multi_scale_process(x, normalize=True)
+        x_list = self.backbone._multi_scale_process(x, normalize=self.use_revin)
         enc    = self.backbone._embed_and_mix(x_list)
         finest = enc[0]                                      # [B*C, T, d_model]
         flat   = finest.reshape(B * C, -1)                   # [B*C, T*d_model]
         pred   = self.head(flat)                             # [B*C, pred_len]
         pred   = pred.reshape(B, C, -1).permute(0, 2, 1)    # [B, pred_len, C]
-        return self.backbone.normalize_layers[0](pred, 'denorm')
+        if self.use_revin:
+            pred = self.backbone.normalize_layers[0](pred, 'denorm')
+        return pred

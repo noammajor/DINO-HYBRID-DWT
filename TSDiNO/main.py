@@ -864,6 +864,7 @@ def test_run(args):
         model = TSMixerForecastModel(
             backbone=TSMixerForDINO(**_tm_kwargs),
             pred_len=args.pred_len,
+            use_revin=getattr(args, 'tsmixer_use_revin', True),
         )
     else:
         model = PatchTST(
