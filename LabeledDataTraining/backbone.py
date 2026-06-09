@@ -51,31 +51,38 @@ class LMCBackbone(nn.Module):
     """Multi-scale cross-attention backbone for LMC label prediction.
 
     Args:
-        backbone        : pretrained TimeMixer.Model (frozen by default)
+        backbone        : pretrained encoder (TSMixerForDINO or PatchTST)
         hidden_dim      : MLP hidden size for all prediction sub-heads
         min_latent      : smallest possible latent_num value
         max_latent      : largest possible latent_num value
         freeze_backbone : gradient does not flow into the backbone when True
+        backbone_type   : "tsmixer" | "patchtst"
     """
 
     def __init__(
         self,
-        backbone: TSMixerForDINO,
+        backbone,
         hidden_dim: int = 64,
         min_latent: int = 2,
         max_latent: int = 10,
         freeze_backbone: bool = True,
+        backbone_type: str = "tsmixer",
     ):
         super().__init__()
-        self.backbone = backbone
+        self.backbone      = backbone
+        self.backbone_type = backbone_type
 
         # Stop gradient flow into the pretrained encoder.
         if freeze_backbone:
             for p in backbone.parameters():
                 p.requires_grad_(False)
 
-        d = backbone.d_model
-        M = backbone.down_sampling_layers + 1
+        if backbone_type == "patchtst":
+            d = backbone.backbone.d_model   # PatchTSTEncoder.d_model
+            M = backbone.num_patch
+        else:  # tsmixer
+            d = backbone.d_model
+            M = backbone.down_sampling_layers + 1
 
         self.d_model = d
         self.M       = M
@@ -109,21 +116,28 @@ class LMCBackbone(nn.Module):
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _encode_multiscale(self, x: torch.Tensor) -> torch.Tensor:
-        """Run the frozen TSMixerForDINO encoder and collapse into per-sample scale tokens.
+        """Run the encoder and collapse into per-sample scale/patch tokens.
 
         x: [B, T, C]  →  [B, M, d_model]
 
-        Uses TSMixerForDINO's own _multi_scale_process + _embed_and_mix,
-        bypassing the CLS cross-attention (forward() is never called).
+        TSMixer: M = down_sampling_layers+1 multi-scale temporal features.
+        PatchTST: M = num_patch, one token per non-overlapping patch,
+                  averaged over the channel dimension.
         """
         B, T, C = x.shape
-        enc_list = self.backbone._embed_and_mix(
-            self.backbone._multi_scale_process(x, normalize=False)
-        )                                                          # M × [B*C, T_k, d_model]
-        pooled = [enc_k.mean(dim=1) for enc_k in enc_list]        # M × [B*C, d_model]
-        z = torch.stack(pooled, dim=1)                             # [B*C, M, d_model]
-        z = z.reshape(B, C, self.M, self.d_model).mean(dim=1)     # [B, M, d_model]
-        return z
+        if self.backbone_type == "patchtst":
+            # forward_recon skips RevIN and returns all patch tokens (CLS dropped).
+            # [B, num_patch, C, d_model] → mean over C → [B, M, d_model]
+            patch_tokens = self.backbone.forward_recon(x)   # [B, M, C, d_model]
+            return patch_tokens.mean(dim=2)                  # [B, M, d_model]
+        else:  # tsmixer
+            enc_list = self.backbone._embed_and_mix(
+                self.backbone._multi_scale_process(x, normalize=False)
+            )                                                          # M × [B*C, T_k, d_model]
+            pooled = [enc_k.mean(dim=1) for enc_k in enc_list]        # M × [B*C, d_model]
+            z = torch.stack(pooled, dim=1)                             # [B*C, M, d_model]
+            z = z.reshape(B, C, self.M, self.d_model).mean(dim=1)     # [B, M, d_model]
+            return z
 
     def _head_attn(
         self, K: torch.Tensor, V: torch.Tensor, head_idx: int

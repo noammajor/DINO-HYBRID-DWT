@@ -37,6 +37,9 @@ def parse_args():
     p.add_argument("--min_lr",        type=float, default=1e-5)
     p.add_argument("--batch_size",    type=int,   default=256)
     p.add_argument("--hidden_dim",    type=int,   default=64)
+    p.add_argument("--backbone_type",   type=str,   default="tsmixer",
+                   choices=["tsmixer", "patchtst"],
+                   help="Encoder backbone: 'tsmixer' (default) or 'patchtst'")
     p.add_argument("--freeze_backbone", type=lambda x: x.lower() != "false", default=False)
     p.add_argument("--min_latent",    type=int,   default=2)
     p.add_argument("--max_latent",    type=int,   default=10)
@@ -67,6 +70,7 @@ def main():
     cfg["min_lr_labeled"]    = args.min_lr
     cfg["batch_size_labeled"]= args.batch_size
     cfg["hidden_dim_labeled"]= args.hidden_dim
+    cfg["backbone_type"]     = args.backbone_type
     cfg["freeze_backbone"]   = args.freeze_backbone
     cfg["min_latent"]        = args.min_latent
     cfg["max_latent"]        = args.max_latent
@@ -85,9 +89,16 @@ def main():
     print(f"  data_dir   : {cfg['data_dir_labeled']}")
     print(f"  checkpoint : {cfg['checkpoint_path'] or 'random init'}")
     print(f"  output_dir : {cfg['output_dir']}  (suffix: _labeldata)")
-    print(f"  encoder    : d_model={cfg['tsmixer_d_model']}  "
-          f"layers={cfg['tsmixer_e_layers']}  "
-          f"scales={cfg['tsmixer_down_sampling_layers'] + 1}")
+    if cfg.get("backbone_type", "tsmixer") == "patchtst":
+        seq_len   = cfg.get("seq_len", 512)
+        patch_len = cfg.get("patch_len", 16)
+        print(f"  encoder    : PatchTST  d_model={cfg.get('embed_dim', 128)}  "
+              f"layers={cfg.get('n_layers', 4)}  "
+              f"patches={seq_len // patch_len}  patch_len={patch_len}")
+    else:
+        print(f"  encoder    : TSMixer  d_model={cfg['tsmixer_d_model']}  "
+              f"layers={cfg['tsmixer_e_layers']}  "
+              f"scales={cfg['tsmixer_down_sampling_layers'] + 1}")
     print(f"  training   : epochs={cfg['epochs_labeled']}  "
           f"lr={cfg['lr_labeled']}  batch={cfg['batch_size_labeled']}")
     print(f"  backbone   : {'frozen' if cfg['freeze_backbone'] else 'unfrozen (pretraining)'}")

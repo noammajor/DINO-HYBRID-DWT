@@ -61,11 +61,61 @@ _TSDINO = (_HERE / ".." / "TSDiNO").resolve()
 sys.path.insert(0, str(_TSDINO))  # always first so models.ts_mixer_backbone beats TimeMixer-main/models/
 
 from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402  # type: ignore
+from models.patchTST import PatchTST                 # noqa: E402  # type: ignore
 from backbone import LMCBackbone               # noqa: E402
 from dataset  import make_loaders              # noqa: E402
 
 
 # ── encoder construction ──────────────────────────────────────────────────────
+
+def _build_patchtst(cfg: dict) -> PatchTST:
+    """Instantiate PatchTST and optionally load pretrained DINO weights."""
+    seq_len   = cfg.get("seq_len", 512)
+    patch_len = cfg.get("patch_len", 16)
+    num_patch = seq_len // patch_len
+
+    model = PatchTST(
+        c_in             = cfg["c_in"],
+        target_dim       = cfg.get("pred_len", 96),
+        patch_len        = patch_len,
+        num_patch        = num_patch,
+        n_layers         = cfg.get("n_layers", 4),
+        n_heads          = cfg.get("n_heads", 16),
+        d_model          = cfg.get("embed_dim", 128),
+        shared_embedding = True,
+        d_ff             = cfg.get("d_ff", 512),
+        dropout          = cfg.get("dropout", 0.1),
+        head_dropout     = cfg.get("head_dropout", 0.1),
+        act              = "gelu",
+        head_type        = "Dino",
+        res_attention    = False,
+        step_size        = patch_len,
+    )
+
+    ckpt_path = cfg.get("checkpoint_path")
+    if ckpt_path and os.path.exists(ckpt_path):
+        raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        sd  = raw["teacher"]
+
+        # DINO checkpoint: TSMultiCropWrapper(PatchTST) → keys are module.backbone.backbone.*
+        # PatchTST model keys start with backbone.* (PatchTSTEncoder) or normalization.*
+        # Strip 'module.' then one 'backbone.' to align with PatchTST's own state dict.
+        new_sd = {}
+        for k, v in sd.items():
+            k = k.replace("module.", "")
+            if k.startswith("backbone."):
+                k = k[len("backbone."):]
+            new_sd[k] = v
+
+        missing, unexpected = model.load_state_dict(new_sd, strict=False)
+        print(f"✓ Loaded PatchTST weights from {ckpt_path}")
+        print(f"  Matched: {len(new_sd) - len(missing)}  "
+              f"Missing: {len(missing)}  Unexpected (DINO-only): {len(unexpected)}")
+    else:
+        print("  No checkpoint — PatchTST initialised randomly.")
+
+    return model
+
 
 def _build_timemixer(cfg: dict) -> TSMixerForDINO:
     """Instantiate TSMixerForDINO and optionally load pretrained weights."""
@@ -240,13 +290,18 @@ def train_lmc(cfg: dict):
           f"Test: {len(test_loader.dataset):,}")
 
     # ── model ─────────────────────────────────────────────────────────────────
-    encoder = _build_timemixer(cfg)
+    backbone_type = cfg.get("backbone_type", "tsmixer")
+    if backbone_type == "patchtst":
+        encoder = _build_patchtst(cfg)
+    else:
+        encoder = _build_timemixer(cfg)
     model   = LMCBackbone(
         backbone        = encoder,
         hidden_dim      = cfg.get("hidden_dim_labeled", 64),
         min_latent      = min_latent,
         max_latent      = max_latent,
         freeze_backbone = cfg.get("freeze_backbone", True),
+        backbone_type   = backbone_type,
     ).to(device)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
