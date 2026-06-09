@@ -202,3 +202,5 @@ class LMCBackbone(nn.Module):
             "dirichlet_max":     d_max,
             "dirichlet":         dirichlet,
         }
+
+

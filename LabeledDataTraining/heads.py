@@ -25,6 +25,38 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class ClassificationHead(nn.Module):
+    """
+    Classification head for use on top of a frozen TSMixerForDINO backbone.
+
+    The backbone's forward() returns [B, C, d_model] (per-channel CLS reps).
+    This head flattens that to [B, C * d_model] then projects to num_classes,
+    mirroring TimeMixer's classifier: GELU → dropout → flatten → linear.
+
+    Args:
+        c_in        : number of input channels (backbone.c_in)
+        d_model     : encoder hidden dimension (backbone.d_model)
+        num_classes : number of output classes
+        dropout     : dropout rate applied before the projection
+    """
+
+    def __init__(self, c_in: int, d_model: int, num_classes: int, dropout: float = 0.1):
+        super().__init__()
+        self.dropout    = nn.Dropout(dropout)
+        self.projection = nn.Linear(c_in * d_model, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x : [B, C, d_model]  (output of backbone.forward())
+        returns logits [B, num_classes] — use with CrossEntropyLoss
+        """
+        output = F.gelu(x)
+        output = self.dropout(output)
+        output = output.flatten(1)          # [B, C * d_model]
+        output = self.projection(output)    # [B, num_classes]
+        return output
+
+
 def _mlp(in_dim: int, hidden_dim: int, out_dim: int) -> nn.Sequential:
     return nn.Sequential(
         nn.Linear(in_dim, hidden_dim),

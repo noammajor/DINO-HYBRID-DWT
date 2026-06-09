@@ -487,9 +487,26 @@ def run_dino(skip_train: bool = False,
                 batch_size=cls_bs, shuffle=(split == "train"))
             cls_train = _mk("train"); cls_val = _mk("val"); cls_test = _mk("test")
             n_classes = cls_train.dataset.n_classes
-        args.path_num = best_ckpt if best_ckpt is not None else 0
-        cls_acc = dino_main.train_classification(
-            args, cls_train, cls_val, cls_test, n_classes)
+        _path_num_cls = best_ckpt if best_ckpt is not None else 0
+        _bbone_cls    = dino_cfg.get("backbone_type", "patchtst")
+        if _bbone_cls == "tsmixer":
+            _tm_cls_spec = _ilu.spec_from_file_location(
+                "tsmixer_classification", dino_dir / "TSMixerClassification.py")
+            _tm_cls_mod  = _ilu.module_from_spec(_tm_cls_spec)
+            _tm_cls_spec.loader.exec_module(_tm_cls_mod)
+            _out_dir = args.output_dir
+            if _path_num_cls == "best" or _path_num_cls == 0:
+                _cls_ckpt = os.path.join(_out_dir, "checkpoint_best.pth")
+            else:
+                _cls_ckpt = os.path.join(_out_dir, f"checkpoint{_path_num_cls:04d}.pth")
+            cls_acc = _tm_cls_mod.classification(
+                dino_cfg, _cls_ckpt, cls_train, cls_val, cls_test, n_classes,
+                linear_probe=linear_probe,
+                mlp_head=(head_type == "mlp"))
+        else:
+            args.path_num = _path_num_cls
+            cls_acc = dino_main.train_classification(
+                args, cls_train, cls_val, cls_test, n_classes)
         print(f"\n{'='*60}")
         print(f"  [DINO] Classification on {classification_dataset}")
         print(f"  Test Accuracy: {cls_acc:.4f}")
@@ -498,27 +515,54 @@ def run_dino(skip_train: bool = False,
     # ── anomaly detection downstream ──────────────────────────────────────────
     anom_result = None
     if anomaly_dataset is not None:
-        _anom_spec = _ilu.spec_from_file_location("tsdino_anomaly", dino_dir / "Anomaly.py")
-        _anom_mod  = _ilu.module_from_spec(_anom_spec)
-        _anom_spec.loader.exec_module(_anom_mod)
-
         from data_loaders.data_puller import AnomalyDataPuller
-        anom_dir = dino_cfg["anomaly_data_dir"]
-        anom_bs  = dino_cfg.get("batch_size_anomaly", 64)
-        p_s      = args.patch_len
-        anom_train = torch.utils.data.DataLoader(
-            AnomalyDataPuller(anom_dir, anomaly_dataset, p_s, which="train"),
-            batch_size=anom_bs, shuffle=False)
-        anom_test  = torch.utils.data.DataLoader(
-            AnomalyDataPuller(anom_dir, anomaly_dataset, p_s, which="test"),
-            batch_size=anom_bs, shuffle=False)
+        anom_dir    = dino_cfg["anomaly_data_dir"]
+        anom_bs     = dino_cfg.get("batch_size_anomaly", 64)
+        _anom_ratio = _get_anomaly_ratio(anomaly_dataset, dino_cfg)
+        _path_num   = best_ckpt if best_ckpt is not None else 0
+        _bbone      = dino_cfg.get("backbone_type", "patchtst")
 
-        args.path_num = best_ckpt if best_ckpt is not None else 0
-        anom_result = _anom_mod.anomaly_detection(
-            args, args.path_num, anom_train, anom_test,
-            anomaly_ratio=_get_anomaly_ratio(anomaly_dataset, dino_cfg),
-            linear_probe=linear_probe,
-            mlp_head=(head_type == "mlp"))
+        if _bbone == "tsmixer":
+            # TSMixer PDM blocks have linear layers fixed to seq_len — the anomaly
+            # window must match the pretraining seq_len exactly.
+            _seq_len = dino_cfg.get("seq_len", 512)
+            p_s      = args.patch_len
+            anom_train = torch.utils.data.DataLoader(
+                AnomalyDataPuller(anom_dir, anomaly_dataset, p_s,
+                                  win_size=_seq_len, which="train"),
+                batch_size=anom_bs, shuffle=False)
+            anom_test  = torch.utils.data.DataLoader(
+                AnomalyDataPuller(anom_dir, anomaly_dataset, p_s,
+                                  win_size=_seq_len, which="test"),
+                batch_size=anom_bs, shuffle=False)
+            _tm_spec = _ilu.spec_from_file_location(
+                "tsmixer_anomaly", dino_dir / "TSMixerAnomaly.py")
+            _tm_mod  = _ilu.module_from_spec(_tm_spec)
+            _tm_spec.loader.exec_module(_tm_mod)
+            dino_cfg["output_dir"] = args.output_dir
+            anom_result = _tm_mod.anomaly_detection(
+                dino_cfg, _path_num, anom_train, anom_test,
+                anomaly_ratio=_anom_ratio,
+                linear_probe=linear_probe,
+                mlp_head=(head_type == "mlp"))
+        else:
+            p_s      = args.patch_len
+            anom_train = torch.utils.data.DataLoader(
+                AnomalyDataPuller(anom_dir, anomaly_dataset, p_s, which="train"),
+                batch_size=anom_bs, shuffle=False)
+            anom_test  = torch.utils.data.DataLoader(
+                AnomalyDataPuller(anom_dir, anomaly_dataset, p_s, which="test"),
+                batch_size=anom_bs, shuffle=False)
+            _anom_spec = _ilu.spec_from_file_location(
+                "tsdino_anomaly", dino_dir / "Anomaly.py")
+            _anom_mod  = _ilu.module_from_spec(_anom_spec)
+            _anom_spec.loader.exec_module(_anom_mod)
+            args.path_num = _path_num
+            anom_result = _anom_mod.anomaly_detection(
+                args, _path_num, anom_train, anom_test,
+                anomaly_ratio=_anom_ratio,
+                linear_probe=linear_probe,
+                mlp_head=(head_type == "mlp"))
 
     return best_ckpt, best_mse, cls_acc, anom_result
 

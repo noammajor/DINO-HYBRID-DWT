@@ -79,7 +79,11 @@ config = {
     #   finest_levels         – how many of the finest detail levels to perturb (1 = only finest).
     #   high_perturb_noise_range – (min_σ, max_σ) of Gaussian noise added to all detail coeffs.
     #
-    "dwt_wavelet":                  "sym4",         # sym4 preferred for SWT/MODWT (near-linear phase); try: "haar", "db4", "sym4", "coif2"
+    "dwt_wavelet":                  "sym4",         # fallback when dwt_wavelet_pool is None
+    # Random wavelet pool: one wavelet is drawn per sample. Set to None to use dwt_wavelet deterministically.
+    # sym* = near-linear phase (less distortion); db* = slight phase distortion (harder student view).
+    # Pools to try:  sym-only ['sym4','sym6','sym8'] | mixed ['sym4','sym6','db4','db6'] | None (fixed)
+    "dwt_wavelet_pool":             ['sym4', 'sym6', 'sym8', 'db4', 'db6'],  # random per sample: sym* (low phase distortion) + db* (higher phase distortion)
     "dwt_level":                    3,              # try: 2, 3, 4
     "dwt_soft_threshold_sigma":     0.3,            # try: 0.1, 0.3, 0.5
     "dwt_zero_out_ratio":           0.4,            # bumped: 0.3 → 0.4

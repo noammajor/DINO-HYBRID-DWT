@@ -674,48 +674,31 @@ class DataAugmentationDino:
             types = spec['type'] if isinstance(spec['type'], list) else [spec['type']]
             per_type = {}
             for t in types:
+                _wavelet_pool = spec.get('wavelet_pool', dwt_cfg.get('dwt_wavelet_pool', None))
+                _wavelet      = spec.get('wavelet',      dwt_cfg['dwt_wavelet'])
+                _shared = dict(
+                    wavelet                  = _wavelet,
+                    wavelet_pool             = _wavelet_pool,
+                    level                    = spec.get('level',                      dwt_cfg['dwt_level']),
+                    soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
+                    zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
+                    finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
+                    high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
+                    band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
+                    band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
+                )
                 if t.startswith('dwt_'):
                     raw_mode = t[4:]   # strip leading 'dwt_'
                     mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
-                    per_type[t] = aug.DWTAugmentation(
-                        wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
-                        level                    = spec.get('level',                      dwt_cfg['dwt_level']),
-                        mode                     = mode,
-                        soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
-                        zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
-                        finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
-                        high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
-                        band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
-                        band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
-                    )
+                    per_type[t] = aug.DWTAugmentation(mode=mode, **_shared)
                 elif t.startswith('swt_'):
                     raw_mode = t[4:]   # strip leading 'swt_'
                     mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
-                    per_type[t] = aug.SWTAugmentation(
-                        wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
-                        level                    = spec.get('level',                      dwt_cfg['dwt_level']),
-                        mode                     = mode,
-                        soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
-                        zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
-                        finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
-                        high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
-                        band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
-                        band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
-                    )
+                    per_type[t] = aug.SWTAugmentation(mode=mode, **_shared)
                 elif t.startswith('modwt_'):
                     raw_mode = t[6:]   # strip leading 'modwt_'
                     mode = self._MODE_ALIASES.get(raw_mode, raw_mode)
-                    per_type[t] = aug.MODWTAugmentation(
-                        wavelet                  = spec.get('wavelet',                    dwt_cfg['dwt_wavelet']),
-                        level                    = spec.get('level',                      dwt_cfg['dwt_level']),
-                        mode                     = mode,
-                        soft_threshold_sigma     = spec.get('soft_threshold_sigma',       dwt_cfg.get('dwt_soft_threshold_sigma', 0.3)),
-                        zero_out_ratio           = spec.get('zero_out_ratio',             dwt_cfg.get('dwt_zero_out_ratio', 0.3)),
-                        finest_levels            = spec.get('finest_levels',              dwt_cfg.get('dwt_finest_levels', 1)),
-                        high_perturb_noise_range = spec.get('high_perturb_noise_range',   dwt_cfg.get('dwt_high_perturb_noise_range', (0.03, 0.08))),
-                        band_scale_approx_range  = dwt_cfg.get('dwt_band_scale_approx_range', (0.9, 1.1)),
-                        band_scale_detail_range  = dwt_cfg.get('dwt_band_scale_detail_range', (0.6, 1.4)),
-                    )
+                    per_type[t] = aug.MODWTAugmentation(mode=mode, **_shared)
                 elif t in self._NON_DWT_REGISTRY:
                     cls = self._NON_DWT_REGISTRY[t]
                     # Each class reads its params from the spec first, then falls back to cfg defaults
@@ -1180,7 +1163,7 @@ def train_classification(args, classification_train=None, classification_val=Non
     if checkpoint_path is not None:
         if os.path.exists(checkpoint_path):
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-            state_dict = checkpoint['student']
+            state_dict = checkpoint['teacher']
             model_dict = model.state_dict()
             new_state_dict = {}
             for key, value in state_dict.items():
