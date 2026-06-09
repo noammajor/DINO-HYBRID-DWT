@@ -41,47 +41,51 @@ for p in [_tsdino, _root, _tm_root, _tm_models]:
 import data_agumentation as aug
 from config import config as cfg
 
-try:
-    from dataset_registry import get_dataset_info as _get_ds_info
-    _HAS_REGISTRY = True
-except Exception:
-    _HAS_REGISTRY = False
+# dataset name → CSV filename (no registry dependency)
+_DATASET_FILES = {
+    'etth1': 'ETTh1.csv',
+    'etth2': 'ETTh2.csv',
+    'ettm1': 'ETTm1.csv',
+    'ettm2': 'ETTm2.csv',
+    'weather':     'weather.csv',
+    'electricity': 'electricity.csv',
+    'traffic':     'traffic.csv',
+}
 
 
 # ── data ──────────────────────────────────────────────────────────────────────
 
-def load_windows(dataset_name, n_samples, seq_len, pred_len, seed):
+def load_windows(dataset_name, data_dir, n_samples, seq_len, pred_len, seed):
     """
-    Returns x_list [seq_len, C], y_list [pred_len, C], n_vars, column_names.
-    Falls back to synthetic if the CSV path cannot be resolved.
+    Load n_samples windows of size seq_len+pred_len from the dataset CSV.
+    Normalises with StandardScaler fit on the training portion (first 60%).
+    Falls back to synthetic signals if the file is not found.
+    Returns x_list, y_list, n_vars, col_names.
     """
-    rng   = np.random.default_rng(seed)
-    total = seq_len + pred_len
-    csv_path, col_names = None, None
+    import pandas as pd
+    from sklearn.preprocessing import StandardScaler
 
-    if _HAS_REGISTRY:
-        try:
-            info     = _get_ds_info(dataset_name)
-            csv_path = info['csv_path']
-            col_names = info['columns']
-        except Exception as e:
-            print(f"[warn] registry lookup failed for '{dataset_name}': {e}")
+    rng      = np.random.default_rng(seed)
+    total    = seq_len + pred_len
+    csv_name = _DATASET_FILES.get(dataset_name, f'{dataset_name}.csv')
+    csv_path = os.path.join(data_dir, csv_name)
 
-    if csv_path and os.path.isfile(csv_path):
-        import pandas as pd
-        from sklearn.preprocessing import StandardScaler
-        df   = pd.read_csv(csv_path, parse_dates=['date'])
+    if os.path.isfile(csv_path):
+        df   = pd.read_csv(csv_path)
         data = df.select_dtypes('number').values.astype(np.float32)
-        sc   = StandardScaler()
-        sc.fit(data[:int(len(data)*0.7)])
-        data = sc.transform(data)
+        col_names = list(df.select_dtypes('number').columns)
         T, C = data.shape
+        train_end = int(T * 0.6)
+        sc = StandardScaler()
+        sc.fit(data[:train_end])
+        data    = sc.transform(data)
         starts  = rng.integers(0, T - total, size=n_samples)
         x_list  = [torch.tensor(data[s:s+seq_len])       for s in starts]
         y_list  = [torch.tensor(data[s+seq_len:s+total]) for s in starts]
-        return x_list, y_list, C, col_names or [str(i) for i in range(C)]
+        print(f"  loaded {csv_path}  shape={data.shape}")
+        return x_list, y_list, C, col_names
     else:
-        print(f"[warn] no data for '{dataset_name}' — using synthetic signals")
+        print(f"  [warn] {csv_path} not found — using synthetic signals")
         C, col_names = 7, [f"var{i}" for i in range(7)]
         x_list, y_list = [], []
         for _ in range(n_samples):
@@ -341,6 +345,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--datasets',     nargs='+',
                         default=['etth1', 'etth2', 'ettm1', 'ettm2'])
+    parser.add_argument('--data_dir',     default='/home/shared/datasets/data - forecasting timeseries',
+                        help='directory containing ETTh1.csv etc.')
     parser.add_argument('--checkpoints',  nargs='*', default=[],
                         help='paths to checkpoint_best.pth files (one per backbone)')
     parser.add_argument('--ckpt_labels',  nargs='*', default=[],
@@ -376,7 +382,7 @@ def main():
         print(f"\n{'='*50}\n  dataset: {dataset}\n{'='*50}")
 
         samples, futures, n_vars, col_names = load_windows(
-            dataset, args.n_samples, args.seq_len, args.pred_len, args.seed)
+            dataset, args.data_dir, args.n_samples, args.seq_len, args.pred_len, args.seed)
         var_indices = [v for v in args.vars if v < n_vars] or list(range(min(3, n_vars)))
 
         # load backbones (once per dataset since c_in may differ)
