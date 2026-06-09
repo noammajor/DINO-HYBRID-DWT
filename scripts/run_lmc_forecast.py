@@ -122,14 +122,9 @@ def main():
     print(f"  Saved DINO-format checkpoint → {converted_path}")
 
     # ── forecast loop ─────────────────────────────────────────────────────────
-    # LMC backbone was trained with normalize=False — disable RevIN in the
-    # forecast model so training and inference see the same input distribution.
-    sys.path.insert(0, str(ROOT / "TSDiNO"))
-    from models.ts_mixer_backbone import TSMixerForecastModel as _TSM
-    _orig_init = _TSM.__init__
-    def _no_revin_init(self, backbone, pred_len, use_revin=False):
-        _orig_init(self, backbone, pred_len, use_revin=use_revin)
-    _TSM.__init__ = _no_revin_init
+    # LMC backbone was trained with normalize=False — disable RevIN so
+    # training and inference see the same input distribution.
+    os.environ["LMC_NO_REVIN"] = "1"
 
     from Train_and_downstream import run
 
