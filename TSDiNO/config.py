@@ -39,7 +39,7 @@ config = {
     "drop_path_rate": 0.1,
 
     # ── DINO head ─────────────────────────────────────────────────────────────
-    "out_dim": 8192,
+    "out_dim": 2048,
     "use_bn_in_head": False,
     "norm_last_layer": True,
 
