@@ -82,7 +82,6 @@ class LMCDataset(Dataset):
         y_raw = torch.from_numpy(self.Y[real_idx].copy())  # [7] float32
 
         y = {
-            "latent_num":       y_raw[_COL_LATENT_NUM].long(),  # CrossEntropyLoss needs long
             "dirichlet":        y_raw[_COL_DIRICHLET    : _COL_DIRICHLET    + 1],
             "weibull_shape":    y_raw[_COL_WEIB_SHAPE   : _COL_WEIB_SHAPE   + 1],
             "weibull_scale":    y_raw[_COL_WEIB_SCALE   : _COL_WEIB_SCALE   + 1],

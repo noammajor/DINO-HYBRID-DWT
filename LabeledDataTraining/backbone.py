@@ -33,18 +33,17 @@ if _TSDINO not in sys.path:
 
 from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402
 from heads import (                                   # noqa: E402
-    LatentNumHead, PositiveHead, DirichletMaxHead, DirichletHead,
+    PositiveHead, DirichletMaxHead, DirichletHead,
 )
 
 # Head-index constants — kept in sync with heads.py Y-layout docstring.
-_LATENT_NUM    = 0   # classification over discrete latent_num range
-_DIRICHLET     = 1   # bounded regression conditioned on (d_min, d_max)
-_WEIBULL_SHAPE = 2   # positive regression
-_WEIBULL_SCALE = 3   # positive regression
-_DIRICHLET_MIN = 4   # positive regression; anchors the dependency chain
-_DIRICHLET_MAX = 5   # positive regression conditioned on d_min
-_ESS_LS        = 6   # positive regression
-_N_HEADS       = 7
+_DIRICHLET     = 0   # bounded regression conditioned on (d_min, d_max)
+_WEIBULL_SHAPE = 1   # positive regression
+_WEIBULL_SCALE = 2   # positive regression
+_DIRICHLET_MIN = 3   # positive regression; anchors the dependency chain
+_DIRICHLET_MAX = 4   # positive regression conditioned on d_min
+_ESS_LS        = 5   # positive regression
+_N_HEADS       = 6
 
 
 class LMCBackbone(nn.Module):
@@ -53,8 +52,6 @@ class LMCBackbone(nn.Module):
     Args:
         backbone        : pretrained encoder (TSMixerForDINO or PatchTST)
         hidden_dim      : MLP hidden size for all prediction sub-heads
-        min_latent      : smallest possible latent_num value
-        max_latent      : largest possible latent_num value
         freeze_backbone : gradient does not flow into the backbone when True
         backbone_type   : "tsmixer" | "patchtst"
     """
@@ -63,8 +60,6 @@ class LMCBackbone(nn.Module):
         self,
         backbone,
         hidden_dim: int = 64,
-        min_latent: int = 2,
-        max_latent: int = 10,
         freeze_backbone: bool = True,
         backbone_type: str = "tsmixer",
     ):
@@ -105,7 +100,6 @@ class LMCBackbone(nn.Module):
 
         # ── Prediction sub-heads ──────────────────────────────────────────────
         # Each head receives its own attention-aggregated [B, d_model] vector.
-        self.latent_num_head    = LatentNumHead(d, hidden_dim, min_latent, max_latent)
         self.weibull_shape_head = PositiveHead(d, hidden_dim)
         self.weibull_scale_head = PositiveHead(d, hidden_dim)
         self.ess_ls_head        = PositiveHead(d, hidden_dim)
@@ -169,7 +163,6 @@ class LMCBackbone(nn.Module):
         teacher_d_max : [B, 1]  ground-truth d_max — inject during training
 
         Returns dict matching the LMCLabelHead output contract:
-            latent_num_logits  [B, num_classes]  → CrossEntropyLoss
             weibull_shape      [B, 1]
             weibull_scale      [B, 1]
             ess_length_scale   [B, 1]
@@ -188,7 +181,6 @@ class LMCBackbone(nn.Module):
         emb = [self._head_attn(K, V, h) for h in range(_N_HEADS)]
 
         # ── Independent heads ──────────────────────────────────────────────────
-        latent_logits = self.latent_num_head(emb[_LATENT_NUM])
         weibull_shape = self.weibull_shape_head(emb[_WEIBULL_SHAPE])
         weibull_scale = self.weibull_scale_head(emb[_WEIBULL_SCALE])
         ess_ls        = self.ess_ls_head(emb[_ESS_LS])
@@ -208,7 +200,6 @@ class LMCBackbone(nn.Module):
         dirichlet  = self.dirichlet_head(emb[_DIRICHLET], d_min_cond, d_max_cond)
 
         return {
-            "latent_num_logits": latent_logits,
             "weibull_shape":     weibull_shape,
             "weibull_scale":     weibull_scale,
             "ess_length_scale":  ess_ls,

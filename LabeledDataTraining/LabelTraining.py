@@ -2,7 +2,7 @@
 Supervised training of LMCBackbone on labeled LMC synthetic data.
 
 Loads a pretrained TimeMixer encoder from a DINO checkpoint, wraps it in
-LMCBackbone, and trains the cross-attention aggregator + 7 MLP heads to
+LMCBackbone, and trains the cross-attention aggregator + 6 MLP heads to
 predict the LMC generation parameters for each time series.
 
 Expected cfg keys:
@@ -31,8 +31,6 @@ Expected cfg keys:
   num_workers         : (default 4)
   freeze_backbone     : (default True)
   hidden_dim_labeled  : MLP hidden size (default 64)
-  min_latent          : (default 2)
-  max_latent          : (default 10)
   output_dir_labeled  : checkpoint output dir (default ./lmc_checkpoints)
   seed                : (default 42)
 """
@@ -166,20 +164,13 @@ def _build_timemixer(cfg: dict) -> TSMixerForDINO:
 def _compute_loss(
     preds:      dict,
     y:          dict,
-    min_latent: int,
-    ce_loss:    nn.CrossEntropyLoss,
     huber:      nn.HuberLoss,
 ) -> tuple[torch.Tensor, dict]:
-    """Multi-task loss across all 7 LMC heads.
+    """Multi-task loss across all 6 LMC heads.
 
     Returns (total_loss, per_head_loss_dict).
     Per-head losses are detached scalars for logging only.
     """
-    # latent_num stored as the actual integer (e.g. 3); shift to 0-based class
-    # index so CrossEntropyLoss sees classes 0…(max_latent - min_latent).
-    target_class = y["latent_num"] - min_latent           # [B]  long
-
-    l_latent    = ce_loss(preds["latent_num_logits"], target_class)
     l_wshape    = huber(preds["weibull_shape"],    y["weibull_shape"])
     l_wscale    = huber(preds["weibull_scale"],    y["weibull_scale"])
     l_ess       = huber(preds["ess_length_scale"], y["ess_length_scale"])
@@ -187,10 +178,9 @@ def _compute_loss(
     l_dmax      = huber(preds["dirichlet_max"],    y["dirichlet_max"])
     l_dirichlet = huber(preds["dirichlet"],        y["dirichlet"])
 
-    total = l_latent + l_wshape + l_wscale + l_ess + l_dmin + l_dmax + l_dirichlet
+    total = l_wshape + l_wscale + l_ess + l_dmin + l_dmax + l_dirichlet
 
     per_head = {
-        "latent_num":       l_latent.item(),
         "weibull_shape":    l_wshape.item(),
         "weibull_scale":    l_wscale.item(),
         "ess_length_scale": l_ess.item(),
@@ -208,10 +198,8 @@ def _run_epoch(
     loader:     torch.utils.data.DataLoader,
     optimizer,
     scheduler,
-    ce_loss:    nn.CrossEntropyLoss,
     huber:      nn.HuberLoss,
     device:     torch.device,
-    min_latent: int,
     training:   bool,
     epoch:      int = 0,
 ) -> dict:
@@ -232,7 +220,7 @@ def _run_epoch(
             t_dmax = y["dirichlet_max"] if training else None
 
             preds = model(x, teacher_d_min=t_dmin, teacher_d_max=t_dmax)
-            loss, per_head = _compute_loss(preds, y, min_latent, ce_loss, huber)
+            loss, per_head = _compute_loss(preds, y, huber)
 
             if training:
                 optimizer.zero_grad()
@@ -264,8 +252,6 @@ def train_lmc(cfg: dict):
     # is always visible as device 0 inside this process.
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     seed       = cfg.get("seed", 42)
-    min_latent = cfg.get("min_latent", 2)
-    max_latent = cfg.get("max_latent", 10)
     epochs     = cfg.get("epochs_labeled", 30)
     lr         = cfg.get("lr_labeled", 3e-4)
     min_lr     = cfg.get("min_lr_labeled", 1e-5)
@@ -298,8 +284,6 @@ def train_lmc(cfg: dict):
     model   = LMCBackbone(
         backbone        = encoder,
         hidden_dim      = cfg.get("hidden_dim_labeled", 64),
-        min_latent      = min_latent,
-        max_latent      = max_latent,
         freeze_backbone = cfg.get("freeze_backbone", True),
         backbone_type   = backbone_type,
     ).to(device)
@@ -309,7 +293,6 @@ def train_lmc(cfg: dict):
     print(f"  Params — trainable: {trainable:,} / total: {total:,}")
 
     # ── losses ────────────────────────────────────────────────────────────────
-    ce_loss = nn.CrossEntropyLoss()
     huber   = nn.HuberLoss(delta=1.0)
 
     # ── optimiser ─────────────────────────────────────────────────────────────
@@ -340,11 +323,11 @@ def train_lmc(cfg: dict):
     for epoch in range(1, epochs + 1):
         train_losses = _run_epoch(
             model, train_loader, optimizer, scheduler,
-            ce_loss, huber, device, min_latent, training=True, epoch=epoch,
+            huber, device, training=True, epoch=epoch,
         )
         val_losses = _run_epoch(
             model, val_loader, None, None,
-            ce_loss, huber, device, min_latent, training=False, epoch=epoch,
+            huber, device, training=False, epoch=epoch,
         )
 
         train_total = sum(train_losses.values())
@@ -394,7 +377,7 @@ def train_lmc(cfg: dict):
 
     test_losses = _run_epoch(
         model, test_loader, None, None,
-        ce_loss, huber, device, min_latent, training=False,
+        huber, device, training=False,
     )
     test_total = sum(test_losses.values())
     print(f"\nTest  total={test_total:.4f}")
@@ -423,8 +406,6 @@ if __name__ == "__main__":
     p.add_argument("--batch_size",    type=int,   default=256)
     p.add_argument("--hidden_dim",    type=int,   default=64)
     p.add_argument("--freeze_backbone", type=lambda x: x.lower() != "false", default=False)
-    p.add_argument("--min_latent",    type=int,   default=2)
-    p.add_argument("--max_latent",    type=int,   default=10)
     p.add_argument("--val_frac",      type=float, default=0.05)
     p.add_argument("--test_frac",     type=float, default=0.05)
     p.add_argument("--num_workers",   type=int,   default=4)
@@ -444,8 +425,6 @@ if __name__ == "__main__":
     cfg["batch_size_labeled"]= a.batch_size
     cfg["hidden_dim_labeled"]= a.hidden_dim
     cfg["freeze_backbone"]   = a.freeze_backbone
-    cfg["min_latent"]        = a.min_latent
-    cfg["max_latent"]        = a.max_latent
     cfg["val_frac"]          = a.val_frac
     cfg["test_frac"]         = a.test_frac
     cfg["num_workers"]       = a.num_workers

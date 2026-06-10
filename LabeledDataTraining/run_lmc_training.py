@@ -41,8 +41,6 @@ def parse_args():
                    choices=["tsmixer", "patchtst"],
                    help="Encoder backbone: 'tsmixer' (default) or 'patchtst'")
     p.add_argument("--freeze_backbone", type=lambda x: x.lower() != "false", default=False)
-    p.add_argument("--min_latent",    type=int,   default=2)
-    p.add_argument("--max_latent",    type=int,   default=10)
     p.add_argument("--val_frac",      type=float, default=0.05)
     p.add_argument("--test_frac",     type=float, default=0.05)
     p.add_argument("--num_workers",   type=int,   default=4)
@@ -72,8 +70,6 @@ def main():
     cfg["hidden_dim_labeled"]= args.hidden_dim
     cfg["backbone_type"]     = args.backbone_type
     cfg["freeze_backbone"]   = args.freeze_backbone
-    cfg["min_latent"]        = args.min_latent
-    cfg["max_latent"]        = args.max_latent
     cfg["val_frac"]          = args.val_frac
     cfg["test_frac"]         = args.test_frac
     cfg["num_workers"]       = args.num_workers
