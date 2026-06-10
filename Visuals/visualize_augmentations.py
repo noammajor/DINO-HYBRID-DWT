@@ -141,38 +141,46 @@ def load_backbone(ckpt_path, c_in, seq_len, device):
 
     arch = {}
     backbone_seq_len = seq_len
+    patch_len = cfg.get('patch_len', 16)
     if ckpt_path and os.path.isfile(ckpt_path):
         try:
             ckpt_meta = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-            a = ckpt_meta.get('args', None)
-            if a is not None:
-                # seq_len is (num_patches-1)*step_size + patch_len — not stored directly
-                num_patches = getattr(a, 'num_patches', None)
-                step_size   = getattr(a, 'step_size',   cfg.get('step_size',   16))
-                patch_len   = getattr(a, 'patch_len',   cfg.get('patch_len',   16))
-                if num_patches is not None:
-                    backbone_seq_len = (num_patches - 1) * step_size + patch_len
-                else:
-                    backbone_seq_len = getattr(a, 'seq_len', seq_len)
+            raw_sd    = ckpt_meta.get('teacher', ckpt_meta)
+            a         = ckpt_meta.get('args', None)
 
-                # c_in: use checkpoint's value if available, else fall back to data c_in
-                ckpt_c_in = getattr(a, 'c_in', c_in)
+            # ── infer seq_len + e_layers + d_model directly from weight shapes ──
+            # First season-mixing Linear has in_features == seq_len.
+            n_layers = 0
+            for k, v in raw_sd.items():
+                kk = k.replace('module.', '')
+                if kk.startswith('backbone.'):
+                    kk = kk[len('backbone.'):]
+                if 'mixing_multi_scale_season.down_sampling_layers.0.0.weight' in kk:
+                    backbone_seq_len = v.shape[1]      # in_features == seq_len
+                if kk.startswith('pdm_blocks.'):
+                    try:
+                        n_layers = max(n_layers, int(kk.split('.')[1]) + 1)
+                    except (IndexError, ValueError):
+                        pass
+                if kk == 'mask_token':
+                    d_model_inferred = v.shape[-1]
 
-                arch = dict(
-                    c_in                 = ckpt_c_in,
-                    seq_len              = backbone_seq_len,
-                    e_layers             = getattr(a, 'tsmixer_e_layers',             getattr(a, 'encoder_layers', 4)),
-                    d_model              = getattr(a, 'tsmixer_d_model',              getattr(a, 'd_model',        128)),
-                    d_ff                 = getattr(a, 'tsmixer_d_ff',                 getattr(a, 'd_ff',           256)),
-                    down_sampling_layers = getattr(a, 'tsmixer_down_sampling_layers', 3),
-                    down_sampling_window = getattr(a, 'tsmixer_down_sampling_window', 2),
-                    down_sampling_method = getattr(a, 'tsmixer_down_sampling_method', 'avg'),
-                    moving_avg           = getattr(a, 'tsmixer_moving_avg',           getattr(a, 'moving_avg', 25)),
-                )
-                print(f"    arch from ckpt: e_layers={arch['e_layers']} d_model={arch['d_model']} "
-                      f"seq_len={arch['seq_len']} c_in={arch['c_in']}")
+            arch = dict(
+                c_in                 = c_in,   # always match the DATA (backbone is channel-independent)
+                seq_len              = backbone_seq_len,
+                e_layers             = n_layers or (getattr(a, 'tsmixer_e_layers', 4) if a is not None else 4),
+                d_model              = locals().get('d_model_inferred',
+                                          getattr(a, 'tsmixer_d_model', 128) if a is not None else 128),
+                d_ff                 = getattr(a, 'tsmixer_d_ff', 256) if a is not None else 256,
+                down_sampling_layers = getattr(a, 'tsmixer_down_sampling_layers', 3) if a is not None else 3,
+                down_sampling_window = getattr(a, 'tsmixer_down_sampling_window', 2) if a is not None else 2,
+                down_sampling_method = getattr(a, 'tsmixer_down_sampling_method', 'avg') if a is not None else 'avg',
+                moving_avg           = getattr(a, 'tsmixer_moving_avg', 25) if a is not None else 25,
+            )
+            print(f"    arch from ckpt: e_layers={arch['e_layers']} d_model={arch['d_model']} "
+                  f"seq_len={arch['seq_len']} c_in={arch['c_in']}  (inferred from weights)")
         except Exception as e:
-            print(f"    [warn] could not read args from checkpoint: {e}")
+            print(f"    [warn] could not read arch from checkpoint: {e}")
 
     backbone = TSMixerForDINO(
         c_in                  = arch.get('c_in',                 c_in),
