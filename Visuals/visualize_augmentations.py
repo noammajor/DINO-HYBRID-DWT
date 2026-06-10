@@ -135,39 +135,53 @@ def load_backbone(ckpt_path, c_in, seq_len, device):
     """
     Build TSMixerForDINO using architecture params stored in the checkpoint's
     'args' namespace, then load teacher weights.
-    Returns (backbone, loaded_ok).
+    Returns (backbone, loaded_ok, backbone_seq_len).
     """
     from models.ts_mixer_backbone import TSMixerForDINO
 
-    # read architecture from checkpoint args so it matches exactly
     arch = {}
+    backbone_seq_len = seq_len
     if ckpt_path and os.path.isfile(ckpt_path):
         try:
             ckpt_meta = torch.load(ckpt_path, map_location='cpu', weights_only=False)
             a = ckpt_meta.get('args', None)
             if a is not None:
+                # seq_len is (num_patches-1)*step_size + patch_len — not stored directly
+                num_patches = getattr(a, 'num_patches', None)
+                step_size   = getattr(a, 'step_size',   cfg.get('step_size',   16))
+                patch_len   = getattr(a, 'patch_len',   cfg.get('patch_len',   16))
+                if num_patches is not None:
+                    backbone_seq_len = (num_patches - 1) * step_size + patch_len
+                else:
+                    backbone_seq_len = getattr(a, 'seq_len', seq_len)
+
+                # c_in: use checkpoint's value if available, else fall back to data c_in
+                ckpt_c_in = getattr(a, 'c_in', c_in)
+
                 arch = dict(
-                    e_layers             = getattr(a, 'tsmixer_e_layers',             getattr(a, 'e_layers',             4)),
-                    d_model              = getattr(a, 'tsmixer_d_model',              getattr(a, 'd_model',              128)),
-                    d_ff                 = getattr(a, 'tsmixer_d_ff',                 getattr(a, 'd_ff',                 256)),
-                    down_sampling_layers = getattr(a, 'tsmixer_down_sampling_layers', getattr(a, 'down_sampling_layers', 3)),
-                    down_sampling_window = getattr(a, 'tsmixer_down_sampling_window', getattr(a, 'down_sampling_window', 2)),
-                    down_sampling_method = getattr(a, 'tsmixer_down_sampling_method', getattr(a, 'down_sampling_method', 'avg')),
-                    moving_avg           = getattr(a, 'tsmixer_moving_avg',           getattr(a, 'moving_avg',           25)),
-                    seq_len              = getattr(a, 'seq_len',                       seq_len),
+                    c_in                 = ckpt_c_in,
+                    seq_len              = backbone_seq_len,
+                    e_layers             = getattr(a, 'tsmixer_e_layers',             getattr(a, 'encoder_layers', 4)),
+                    d_model              = getattr(a, 'tsmixer_d_model',              getattr(a, 'd_model',        128)),
+                    d_ff                 = getattr(a, 'tsmixer_d_ff',                 getattr(a, 'd_ff',           256)),
+                    down_sampling_layers = getattr(a, 'tsmixer_down_sampling_layers', 3),
+                    down_sampling_window = getattr(a, 'tsmixer_down_sampling_window', 2),
+                    down_sampling_method = getattr(a, 'tsmixer_down_sampling_method', 'avg'),
+                    moving_avg           = getattr(a, 'tsmixer_moving_avg',           getattr(a, 'moving_avg', 25)),
                 )
-                print(f"    arch from ckpt: e_layers={arch['e_layers']} d_model={arch['d_model']} seq_len={arch['seq_len']}")
+                print(f"    arch from ckpt: e_layers={arch['e_layers']} d_model={arch['d_model']} "
+                      f"seq_len={arch['seq_len']} c_in={arch['c_in']}")
         except Exception as e:
             print(f"    [warn] could not read args from checkpoint: {e}")
 
     backbone = TSMixerForDINO(
-        c_in                  = c_in,
+        c_in                  = arch.get('c_in',                 c_in),
         seq_len               = arch.get('seq_len',              seq_len),
         d_model               = arch.get('d_model',              cfg.get('tsmixer_d_model',             128)),
         e_layers              = arch.get('e_layers',             cfg.get('tsmixer_e_layers',             4)),
         d_ff                  = arch.get('d_ff',                 cfg.get('tsmixer_d_ff',                 256)),
         dropout               = cfg.get('dropout',               0.1),
-        patch_len             = cfg.get('patch_len',             16),
+        patch_len             = patch_len if arch else cfg.get('patch_len', 16),
         down_sampling_layers  = arch.get('down_sampling_layers', cfg.get('tsmixer_down_sampling_layers', 3)),
         down_sampling_window  = arch.get('down_sampling_window', cfg.get('tsmixer_down_sampling_window', 2)),
         down_sampling_method  = arch.get('down_sampling_method', cfg.get('tsmixer_down_sampling_method', 'avg')),
@@ -202,7 +216,7 @@ def load_backbone(ckpt_path, c_in, seq_len, device):
         print(f"  [warn] checkpoint not found: {ckpt_path}")
 
     backbone.eval()
-    return backbone, loaded_ok
+    return backbone, loaded_ok, backbone_seq_len
 
 
 @torch.no_grad()
@@ -245,7 +259,8 @@ def _sample_colors(si):
 
 def make_figure(dataset_name, samples, futures, var_indices, col_names,
                 teacher_tf, student_tf, teacher_sym4_tf, teacher_db4_tf,
-                backbones, ckpt_labels, device, out_path):
+                backbones, ckpt_labels, device, out_path,
+                backbone_samples=None):
 
     n_v    = len(var_indices)
     n_rows = 4
@@ -306,9 +321,10 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
             width   = 0.35
             offsets = np.linspace(-width*(n_ckpt-1)/2, width*(n_ckpt-1)/2, n_ckpt)
 
+            repr_src = backbone_samples if backbone_samples is not None else samples
             for ci, (backbone, label) in enumerate(zip(backbones, ckpt_labels)):
                 t_sims, s_sims = [], []
-                for x in samples:
+                for x in repr_src:
                     r_orig    = get_repr(backbone, x,             device)
                     r_teacher = get_repr(backbone, teacher_tf(x), device)
                     r_student = get_repr(backbone, student_tf(x), device)
@@ -411,10 +427,20 @@ def main():
 
         # load backbones once per dataset (shared across transforms)
         backbones = []
+        backbone_seq_len = args.seq_len
         for ckpt_path in args.checkpoints:
             print(f"  backbone: {ckpt_path}")
-            bb, _ = load_backbone(ckpt_path, n_vars, args.seq_len, device)
+            bb, _, bsl = load_backbone(ckpt_path, n_vars, args.seq_len, device)
             backbones.append(bb)
+            backbone_seq_len = bsl  # all checkpoints should share the same seq_len
+
+        # load longer windows for backbone repr if needed
+        if backbone_seq_len != args.seq_len:
+            print(f"  loading backbone windows: seq_len={backbone_seq_len}")
+            bb_samples, _, _, _ = load_windows(
+                dataset, args.data_dir, args.n_samples, backbone_seq_len, args.pred_len, args.seed)
+        else:
+            bb_samples = samples
 
         for tfm in args.transforms:
             teacher_type, student_type = _TRANSFORM_MODES[tfm]
@@ -425,19 +451,20 @@ def main():
             print(f"  transform: {tfm}  teacher={teacher_type}  student={student_type}")
 
             make_figure(
-                dataset_name   = dataset,
-                samples        = samples,
-                futures        = futures,
-                var_indices    = var_indices,
-                col_names      = col_names,
-                teacher_tf     = teacher_tf,
-                student_tf     = student_tf,
-                teacher_sym4_tf= sym4_tf,
-                teacher_db4_tf = db4_tf,
-                backbones      = backbones,
-                ckpt_labels    = ckpt_labels,
-                device         = device,
-                out_path       = os.path.join(out_dir, f"aug_views_{dataset}_{tfm}.png"),
+                dataset_name     = dataset,
+                samples          = samples,
+                futures          = futures,
+                var_indices      = var_indices,
+                col_names        = col_names,
+                teacher_tf       = teacher_tf,
+                student_tf       = student_tf,
+                teacher_sym4_tf  = sym4_tf,
+                teacher_db4_tf   = db4_tf,
+                backbones        = backbones,
+                ckpt_labels      = ckpt_labels,
+                device           = device,
+                out_path         = os.path.join(out_dir, f"aug_views_{dataset}_{tfm}.png"),
+                backbone_samples = bb_samples,
             )
 
 
