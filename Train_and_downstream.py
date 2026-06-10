@@ -236,6 +236,7 @@ def run_dino(skip_train: bool = False,
              mlm_phi: float = None,
              mlm_mode: str = None,
              backbone_type: str = None,
+             dwt_wavelet_pool: list = None,
              lr_forecasting: float = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
@@ -315,6 +316,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_mode'] = mlm_mode
     if backbone_type is not None:
         dino_cfg['backbone_type'] = backbone_type
+    if dwt_wavelet_pool is not None:
+        dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
     if seed is not None:
         dino_cfg['seed'] = seed
     pretrain_source = _resolve_pretrain_source(dino_cfg)
@@ -3602,6 +3605,7 @@ def run(model: str,
         mlm_phi: float = None,
         mlm_mode: str = None,
         backbone_type: str = None,
+        dwt_wavelet_pool: list = None,
         phi: float = None,
         lr_forecasting: float = None):
     """
@@ -3702,6 +3706,7 @@ def run(model: str,
     if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
+    if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
@@ -3793,6 +3798,8 @@ if __name__ == "__main__":
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--backbone_type", type=str, default=None,
                         help="patchtst | tsmixer — overrides config (default: patchtst)")
+    parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
+                        help="Wavelet pool for random-per-sample DWT aug (e.g. sym4 sym6 sym8)")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -3821,6 +3828,7 @@ if __name__ == "__main__":
         mlm_phi=args.mlm_phi,
         mlm_mode=args.mlm_mode,
         backbone_type=args.backbone_type,
+        dwt_wavelet_pool=args.dwt_wavelet_pool,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",
