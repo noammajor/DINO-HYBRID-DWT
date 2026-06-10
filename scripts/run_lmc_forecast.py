@@ -147,6 +147,10 @@ def main():
     print(f"  Encoder keys extracted: {len(dino_ckpt['teacher'])}")
     _warn_arch_mismatch(lmc_cfg)
 
+    # Use backbone type from saved checkpoint cfg — never hardcode.
+    backbone_type = lmc_cfg.get("backbone_type", "tsmixer")
+    print(f"  Backbone type: {backbone_type}")
+
     CKPT_DIR.mkdir(parents=True, exist_ok=True)
     converted_path = CKPT_DIR / "checkpoint_best.pth"
     torch.save(dino_ckpt, converted_path)
@@ -178,7 +182,7 @@ def main():
                         model="dino",
                         skip_train=True,
                         forecast_dataset=dataset,
-                        backbone_type="tsmixer",
+                        backbone_type=backbone_type,
                         checkpoints=["best"],
                         output_dir=str(CKPT_DIR),
                         pred_lens=[pred_len],
