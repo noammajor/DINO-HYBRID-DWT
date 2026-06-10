@@ -241,15 +241,6 @@ def cosine_sim(a, b):
     return (a * b).sum(dim=-1).mean().item()             # scalar
 
 
-def rel_l2(a, b):
-    """Relative L2 distance ‖a-b‖ / ‖a‖, mean across channels.
-    Unlike cosine it does not normalise away magnitude, so it stays sensitive
-    even when the two representations point in nearly the same direction."""
-    num = (a - b).norm(dim=-1)
-    den = a.norm(dim=-1).clamp_min(1e-8)
-    return (num / den).mean().item()
-
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _fft_power(sig):
@@ -287,7 +278,7 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
         "Overlay: orig / teacher / student",
         "FFT power spectrum",
         "Phase: teacher  sym4 (—) vs db4 (--)",
-        "Repr rel-L2 dist to original",
+        "Repr cosine-sim to original",
     ]
 
     for vi, var in enumerate(var_indices):
@@ -329,7 +320,7 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
             ax.plot(sym_v, color=c['orig'],    lw=0.85, alpha=0.8,  label=f"sym4{sfx}")
             ax.plot(db_v,  color=c['student'], lw=0.85, alpha=0.8, ls='--', label=f"db4{sfx}")
 
-        # ── panel 4: representation relative-L2 distance to original ───────
+        # ── panel 4: representation cosine similarity ──────────────────────
         ax = axes[3, vi]
         if backbones:
             n_ckpt  = len(backbones)
@@ -340,24 +331,25 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
 
             repr_src = backbone_samples if backbone_samples is not None else samples
             for ci, (backbone, label) in enumerate(zip(backbones, ckpt_labels)):
-                t_d, s_d = [], []
+                t_sims, s_sims = [], []
                 for x in repr_src:
                     r_orig    = get_repr(backbone, x,             device)
                     r_teacher = get_repr(backbone, teacher_tf(x), device)
                     r_student = get_repr(backbone, student_tf(x), device)
-                    t_d.append(rel_l2(r_orig, r_teacher))
-                    s_d.append(rel_l2(r_orig, r_student))
+                    t_sims.append(cosine_sim(r_orig, r_teacher))
+                    s_sims.append(cosine_sim(r_orig, r_student))
 
                 col = _CKPT_COLORS[ci % len(_CKPT_COLORS)]
-                ax.bar(x_base + offsets[ci] - width*0.25, t_d, width*0.45,
+                ax.bar(x_base + offsets[ci] - width*0.25, t_sims, width*0.45,
                        color=col, alpha=0.85, label=f"{label} teacher")
-                ax.bar(x_base + offsets[ci] + width*0.25, s_d, width*0.45,
+                ax.bar(x_base + offsets[ci] + width*0.25, s_sims, width*0.45,
                        color=col, alpha=0.4,  hatch='//', label=f"{label} student")
 
-            ax.set_ylim(bottom=0)
+            ax.set_ylim(0, 1.05)
             ax.set_xticks(x_base)
             ax.set_xticklabels([f"s{i+1}" for i in range(n_samp)], fontsize=6)
-            ax.set_ylabel("rel. L2 dist to orig  ‖Δ‖/‖orig‖", fontsize=7)
+            ax.axhline(1.0, color='grey', lw=0.5, ls='--')
+            ax.set_ylabel("cosine sim to orig", fontsize=7)
         else:
             ax.text(0.5, 0.5, "no checkpoints provided",
                     ha='center', va='center', transform=ax.transAxes, fontsize=8, color='grey')
