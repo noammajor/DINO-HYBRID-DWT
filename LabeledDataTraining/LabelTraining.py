@@ -256,8 +256,11 @@ def train_lmc(cfg: dict):
     lr         = cfg.get("lr_labeled", 3e-4)
     min_lr     = cfg.get("min_lr_labeled", 1e-5)
     # Save alongside DINO checkpoints in the same output_dir, suffixed with _labeldata.
-    output_dir = Path(cfg["output_dir"])
+    # An optional save_suffix (e.g. "_no_latent") is appended to every output file
+    # so distinct runs in the same output_dir don't overwrite each other.
+    output_dir  = Path(cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    save_suffix = cfg.get("save_suffix", "")
 
     torch.manual_seed(seed)
 
@@ -315,7 +318,7 @@ def train_lmc(cfg: dict):
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
 
     saveckp_freq = cfg.get("saveckp_freq", 1)
-    log_path     = output_dir / "log_labeldata.txt"
+    log_path     = output_dir / f"log_labeldata{save_suffix}.txt"
 
     # ── training loop ─────────────────────────────────────────────────────────
     best_val_loss = float("inf")
@@ -364,15 +367,15 @@ def train_lmc(cfg: dict):
 
         # Periodic checkpoint — mirrors DINO's saveckp_freq behaviour.
         if saveckp_freq and epoch % saveckp_freq == 0:
-            torch.save(save_dict, output_dir / f"checkpoint{epoch}_labeldata.pth")
+            torch.save(save_dict, output_dir / f"checkpoint{epoch}_labeldata{save_suffix}.pth")
 
         if val_total < best_val_loss:
             best_val_loss = val_total
-            torch.save(save_dict, output_dir / "checkpoint_best_labeldata.pth")
-            print(f"  → saved checkpoint_best_labeldata.pth  (val={val_total:.4f})")
+            torch.save(save_dict, output_dir / f"checkpoint_best_labeldata{save_suffix}.pth")
+            print(f"  → saved checkpoint_best_labeldata{save_suffix}.pth  (val={val_total:.4f})")
 
     # ── test ──────────────────────────────────────────────────────────────────
-    ckpt = torch.load(output_dir / "checkpoint_best_labeldata.pth", map_location=device, weights_only=False)
+    ckpt = torch.load(output_dir / f"checkpoint_best_labeldata{save_suffix}.pth", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
 
     test_losses = _run_epoch(
@@ -412,6 +415,8 @@ if __name__ == "__main__":
     p.add_argument("--saveckp_freq",  type=int,   default=1)
     p.add_argument("--gpu",           type=int,   default=0)
     p.add_argument("--seed",          type=int,   default=42)
+    p.add_argument("--save_suffix",   type=str,   default="",
+                   help="Suffix appended to saved log/checkpoint filenames, e.g. _no_latent")
     a = p.parse_args()
 
     cfg = dict(_dino_cfg)
@@ -431,6 +436,7 @@ if __name__ == "__main__":
     cfg["saveckp_freq"]      = a.saveckp_freq
     cfg["gpu"]               = a.gpu
     cfg["seed"]              = a.seed
+    cfg["save_suffix"]       = a.save_suffix
 
     print("=" * 60)
     print("  LMC Pretraining")

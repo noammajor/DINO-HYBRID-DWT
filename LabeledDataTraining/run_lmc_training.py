@@ -49,6 +49,8 @@ def parse_args():
     p.add_argument("--seed",          type=int,   default=42)
     p.add_argument("--output_dir",    type=str,   default=None,
                    help="Override checkpoint output dir (default: from DINO config)")
+    p.add_argument("--save_suffix",   type=str,   default="",
+                   help="Suffix appended to saved log/checkpoint filenames, e.g. _no_latent")
     return p.parse_args()
 
 
@@ -76,6 +78,7 @@ def main():
     cfg["saveckp_freq"]      = args.saveckp_freq
     cfg["gpu"]               = args.gpu
     cfg["seed"]              = args.seed
+    cfg["save_suffix"]       = args.save_suffix
     if args.output_dir is not None:
         cfg["output_dir"]      = args.output_dir
 
