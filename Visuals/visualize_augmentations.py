@@ -133,28 +133,49 @@ def _make_aug(spec, wavelet_override=None):
 
 def load_backbone(ckpt_path, c_in, seq_len, device):
     """
-    Build TSMixerForDINO and load teacher weights from a DINO checkpoint.
+    Build TSMixerForDINO using architecture params stored in the checkpoint's
+    'args' namespace, then load teacher weights.
     Returns (backbone, loaded_ok).
-    Teacher keys in the checkpoint are backbone.* (from TSMultiCropWrapper).
     """
     from models.ts_mixer_backbone import TSMixerForDINO
 
+    # read architecture from checkpoint args so it matches exactly
+    arch = {}
+    if ckpt_path and os.path.isfile(ckpt_path):
+        try:
+            ckpt_meta = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+            a = ckpt_meta.get('args', None)
+            if a is not None:
+                arch = dict(
+                    e_layers             = getattr(a, 'tsmixer_e_layers',             getattr(a, 'e_layers',             4)),
+                    d_model              = getattr(a, 'tsmixer_d_model',              getattr(a, 'd_model',              128)),
+                    d_ff                 = getattr(a, 'tsmixer_d_ff',                 getattr(a, 'd_ff',                 256)),
+                    down_sampling_layers = getattr(a, 'tsmixer_down_sampling_layers', getattr(a, 'down_sampling_layers', 3)),
+                    down_sampling_window = getattr(a, 'tsmixer_down_sampling_window', getattr(a, 'down_sampling_window', 2)),
+                    down_sampling_method = getattr(a, 'tsmixer_down_sampling_method', getattr(a, 'down_sampling_method', 'avg')),
+                    moving_avg           = getattr(a, 'tsmixer_moving_avg',           getattr(a, 'moving_avg',           25)),
+                    seq_len              = getattr(a, 'seq_len',                       seq_len),
+                )
+                print(f"    arch from ckpt: e_layers={arch['e_layers']} d_model={arch['d_model']} seq_len={arch['seq_len']}")
+        except Exception as e:
+            print(f"    [warn] could not read args from checkpoint: {e}")
+
     backbone = TSMixerForDINO(
         c_in                  = c_in,
-        seq_len               = seq_len,
-        d_model               = cfg.get('tsmixer_d_model',              128),
-        e_layers              = cfg.get('tsmixer_e_layers',              4),   # layers4 checkpoint
-        d_ff                  = cfg.get('tsmixer_d_ff',                  256),
-        dropout               = cfg.get('dropout',                       0.1),
-        patch_len             = cfg.get('patch_len',                     16),
-        down_sampling_layers  = cfg.get('tsmixer_down_sampling_layers',  3),
-        down_sampling_window  = cfg.get('tsmixer_down_sampling_window',  2),
-        down_sampling_method  = cfg.get('tsmixer_down_sampling_method',  'avg'),
-        decomp_method         = cfg.get('tsmixer_decomp_method',         'moving_avg'),
-        moving_avg            = cfg.get('tsmixer_moving_avg',            25),
-        top_k                 = cfg.get('tsmixer_top_k',                 5),
-        use_norm              = cfg.get('tsmixer_use_norm',              1),
-        channel_independence  = cfg.get('tsmixer_channel_independence',  1),
+        seq_len               = arch.get('seq_len',              seq_len),
+        d_model               = arch.get('d_model',              cfg.get('tsmixer_d_model',             128)),
+        e_layers              = arch.get('e_layers',             cfg.get('tsmixer_e_layers',             4)),
+        d_ff                  = arch.get('d_ff',                 cfg.get('tsmixer_d_ff',                 256)),
+        dropout               = cfg.get('dropout',               0.1),
+        patch_len             = cfg.get('patch_len',             16),
+        down_sampling_layers  = arch.get('down_sampling_layers', cfg.get('tsmixer_down_sampling_layers', 3)),
+        down_sampling_window  = arch.get('down_sampling_window', cfg.get('tsmixer_down_sampling_window', 2)),
+        down_sampling_method  = arch.get('down_sampling_method', cfg.get('tsmixer_down_sampling_method', 'avg')),
+        decomp_method         = cfg.get('tsmixer_decomp_method', 'moving_avg'),
+        moving_avg            = arch.get('moving_avg',           cfg.get('tsmixer_moving_avg',           25)),
+        top_k                 = cfg.get('tsmixer_top_k',         5),
+        use_norm              = cfg.get('tsmixer_use_norm',      1),
+        channel_independence  = cfg.get('tsmixer_channel_independence', 1),
     ).to(device)
 
     loaded_ok = False
@@ -345,6 +366,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--datasets',     nargs='+',
                         default=['etth1', 'etth2', 'ettm1', 'ettm2'])
+    parser.add_argument('--transforms',   nargs='+', default=['dwt', 'swt', 'modwt'],
+                        choices=['dwt', 'swt', 'modwt'],
+                        help='wavelet transform families to compare (each produces its own figure)')
     parser.add_argument('--data_dir',     default='/home/shared/datasets/data - forecasting timeseries',
                         help='directory containing ETTh1.csv etc.')
     parser.add_argument('--checkpoints',  nargs='*', default=[],
@@ -365,18 +389,18 @@ def main():
     device  = 'cuda' if torch.cuda.is_available() else 'cpu'
     out_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # augmentation transforms (shared across datasets)
-    teacher_tf   = _make_aug(cfg['global_crops'][0])
-    student_tf   = _make_aug(cfg['local_crops'][0])
-    sym4_tf      = _make_aug(cfg['global_crops'][0], wavelet_override='sym4')
-    db4_tf       = _make_aug(cfg['global_crops'][0], wavelet_override='db4')
-
     ckpt_labels = args.ckpt_labels or [
         os.path.basename(os.path.dirname(p)) for p in args.checkpoints
     ]
-    # pad / truncate labels to match checkpoints
     while len(ckpt_labels) < len(args.checkpoints):
         ckpt_labels.append(f"ckpt{len(ckpt_labels)}")
+
+    # teacher/student mode for each transform family
+    _TRANSFORM_MODES = {
+        'dwt':   ('dwt_low_pass',   'dwt_hard'),
+        'swt':   ('swt_low_pass',   'swt_hard'),
+        'modwt': ('modwt_low_pass', 'modwt_hard'),
+    }
 
     for dataset in args.datasets:
         print(f"\n{'='*50}\n  dataset: {dataset}\n{'='*50}")
@@ -385,28 +409,36 @@ def main():
             dataset, args.data_dir, args.n_samples, args.seq_len, args.pred_len, args.seed)
         var_indices = [v for v in args.vars if v < n_vars] or list(range(min(3, n_vars)))
 
-        # load backbones (once per dataset since c_in may differ)
+        # load backbones once per dataset (shared across transforms)
         backbones = []
         for ckpt_path in args.checkpoints:
             print(f"  backbone: {ckpt_path}")
             bb, _ = load_backbone(ckpt_path, n_vars, args.seq_len, device)
             backbones.append(bb)
 
-        make_figure(
-            dataset_name   = dataset,
-            samples        = samples,
-            futures        = futures,
-            var_indices    = var_indices,
-            col_names      = col_names,
-            teacher_tf     = teacher_tf,
-            student_tf     = student_tf,
-            teacher_sym4_tf= sym4_tf,
-            teacher_db4_tf = db4_tf,
-            backbones      = backbones,
-            ckpt_labels    = ckpt_labels,
-            device         = device,
-            out_path       = os.path.join(out_dir, f"aug_views_{dataset}.png"),
-        )
+        for tfm in args.transforms:
+            teacher_type, student_type = _TRANSFORM_MODES[tfm]
+            teacher_tf = _make_aug({'type': teacher_type, 'crop_ratio': 1.0})
+            student_tf = _make_aug({'type': student_type, 'crop_ratio': 1.0})
+            sym4_tf    = _make_aug({'type': teacher_type, 'crop_ratio': 1.0}, wavelet_override='sym4')
+            db4_tf     = _make_aug({'type': teacher_type, 'crop_ratio': 1.0}, wavelet_override='db4')
+            print(f"  transform: {tfm}  teacher={teacher_type}  student={student_type}")
+
+            make_figure(
+                dataset_name   = dataset,
+                samples        = samples,
+                futures        = futures,
+                var_indices    = var_indices,
+                col_names      = col_names,
+                teacher_tf     = teacher_tf,
+                student_tf     = student_tf,
+                teacher_sym4_tf= sym4_tf,
+                teacher_db4_tf = db4_tf,
+                backbones      = backbones,
+                ckpt_labels    = ckpt_labels,
+                device         = device,
+                out_path       = os.path.join(out_dir, f"aug_views_{dataset}_{tfm}.png"),
+            )
 
 
 if __name__ == '__main__':
