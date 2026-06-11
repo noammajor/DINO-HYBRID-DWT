@@ -3063,9 +3063,16 @@ def run_timemixer(skip_train: bool = False,
                     if _k.startswith("backbone."):
                         _k = _k[len("backbone."):]
                     _new_sd[_k] = _v
-                _miss, _unexp = exp.model.load_state_dict(_new_sd, strict=False)
+                # Skip shape-mismatched keys (e.g. normalize_layers trained on c_in=1)
+                _model_sd = exp.model.state_dict()
+                _filtered = {k: v for k, v in _new_sd.items()
+                             if k in _model_sd and _model_sd[k].shape == v.shape}
+                _skipped  = [k for k in _new_sd if k in _model_sd and _model_sd[k].shape != _new_sd[k].shape]
+                _miss, _unexp = exp.model.load_state_dict(_filtered, strict=False)
                 print(f"  [TimeMixer] Loaded pretrained backbone: {_ckpt_path}")
-                print(f"  Matched: {len(_new_sd)-len(_miss)}  Missing: {len(_miss)}  Unexpected: {len(_unexp)}")
+                print(f"  Matched: {len(_filtered)}  Missing: {len(_miss)}  Skipped (shape mismatch): {len(_skipped)}")
+                if _skipped:
+                    print(f"  Skipped keys: {_skipped}")
             elif _ckpt_path:
                 print(f"  [TimeMixer] WARNING: checkpoint not found: {_ckpt_path}")
 
