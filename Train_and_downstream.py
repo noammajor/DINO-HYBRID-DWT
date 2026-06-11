@@ -3027,7 +3027,7 @@ def run_timemixer(skip_train: bool = False,
             ft_args.learning_rate = _get_forecast_lr(cfg, 'lr_forecasting', 5e-4)
             ft_args.batch_size    = _fc_bs
 
-            # ── resolve checkpoint path before building setting string ──────────
+            # ── resolve checkpoint path (needed for setting string) ───────────
             _ckpt_path = checkpoint
             if _ckpt_path is None and ckpt_tag is not None:
                 _ckpt_path = str(
@@ -3035,20 +3035,6 @@ def run_timemixer(skip_train: bool = False,
                     f"checkpoints_synthetic_layers{cfg['e_layers']}_{ckpt_tag}" /
                     "checkpoint_best.pth"
                 )
-            if _ckpt_path and os.path.exists(_ckpt_path):
-                _raw = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
-                _sd  = _raw.get("teacher", _raw.get("model", _raw))
-                _new_sd = {}
-                for _k, _v in _sd.items():
-                    _k = _k.replace("module.", "")
-                    if _k.startswith("backbone."):
-                        _k = _k[len("backbone."):]
-                    _new_sd[_k] = _v
-                _miss, _unexp = exp.model.load_state_dict(_new_sd, strict=False)
-                print(f"  [TimeMixer] Loaded pretrained backbone: {_ckpt_path}")
-                print(f"  Matched: {len(_new_sd)-len(_miss)}  Missing: {len(_miss)}  Unexpected: {len(_unexp)}")
-            elif _ckpt_path:
-                print(f"  [TimeMixer] WARNING: checkpoint not found: {_ckpt_path}")
 
             _ckpt_suffix = (f"_{Path(_ckpt_path).parent.name}" if _ckpt_path else "")
             setting = (f"timemixer_{forecast_dataset}_pl{pred_len}"
@@ -3066,6 +3052,22 @@ def run_timemixer(skip_train: bool = False,
                 loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
                 return loader.dataset, loader
             exp._get_data = _types.MethodType(_get_data, exp)
+
+            # ── load pretrained backbone into exp.model ────────────────────────
+            if _ckpt_path and os.path.exists(_ckpt_path):
+                _raw = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
+                _sd  = _raw.get("teacher", _raw.get("model", _raw))
+                _new_sd = {}
+                for _k, _v in _sd.items():
+                    _k = _k.replace("module.", "")
+                    if _k.startswith("backbone."):
+                        _k = _k[len("backbone."):]
+                    _new_sd[_k] = _v
+                _miss, _unexp = exp.model.load_state_dict(_new_sd, strict=False)
+                print(f"  [TimeMixer] Loaded pretrained backbone: {_ckpt_path}")
+                print(f"  Matched: {len(_new_sd)-len(_miss)}  Missing: {len(_miss)}  Unexpected: {len(_unexp)}")
+            elif _ckpt_path:
+                print(f"  [TimeMixer] WARNING: checkpoint not found: {_ckpt_path}")
 
             if not skip_train:
                 exp.train(setting)
