@@ -36,13 +36,17 @@ DATASETS  = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
 PRED_LENS = [96, 192, 336, 720]
 
 
-def _find_best_checkpoint(ckpt_dir: Path):
+def _find_best_checkpoint(ckpt_dir: Path, checkpoint_name: str = None):
     """Return path to the best checkpoint in ckpt_dir.
 
-    Priority:
+    If checkpoint_name is given (e.g. 'checkpoint20.pth'), use that directly.
+    Otherwise:
       1. checkpoint_best.pth  — saved whenever val loss improved
       2. highest-numbered checkpoint{N}.pth  — latest epoch as fallback
     """
+    if checkpoint_name is not None:
+        p = ckpt_dir / checkpoint_name
+        return p if p.exists() else None
     best = ckpt_dir / "checkpoint_best.pth"
     if best.exists():
         return best
@@ -69,6 +73,8 @@ def main():
     p.add_argument("--pred_lens",  nargs="+",  type=int, default=PRED_LENS)
     p.add_argument("--encoder_layers", type=int, default=4)
     p.add_argument("--epochs_forecasting", type=int, default=None)
+    p.add_argument("--checkpoint_name", type=str, default=None,
+                   help="Specific checkpoint file to use (e.g. checkpoint20.pth). Default: checkpoint_best.pth")
     args = p.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
@@ -87,7 +93,7 @@ def main():
                 existing.add((row["ckpt"], row["dataset"], int(row["pred_len"])))
 
     for ckpt_dir in args.ckpt_dirs:
-        ckpt_path = _find_best_checkpoint(ROOT / ckpt_dir)
+        ckpt_path = _find_best_checkpoint(ROOT / ckpt_dir, args.checkpoint_name)
         if ckpt_path is None:
             print(f"\n[SKIP] {ckpt_dir} — no checkpoint found")
             continue
