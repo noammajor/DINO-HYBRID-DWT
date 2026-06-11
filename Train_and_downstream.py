@@ -3027,8 +3027,9 @@ def run_timemixer(skip_train: bool = False,
             ft_args.learning_rate = _get_forecast_lr(cfg, 'lr_forecasting', 5e-4)
             ft_args.batch_size    = _fc_bs
 
+            _ckpt_suffix = (f"_{Path(_ckpt_path).parent.name}" if _ckpt_path else "")
             setting = (f"timemixer_{forecast_dataset}_pl{pred_len}"
-                       f"_dm{cfg['d_model']}_el{cfg['e_layers']}")
+                       f"_dm{cfg['d_model']}_el{cfg['e_layers']}{_ckpt_suffix}")
 
             print(f"\n[TimeMixer] Forecasting pred_len={pred_len} on {forecast_dataset} …")
 
