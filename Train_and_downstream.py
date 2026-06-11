@@ -3027,24 +3027,7 @@ def run_timemixer(skip_train: bool = False,
             ft_args.learning_rate = _get_forecast_lr(cfg, 'lr_forecasting', 5e-4)
             ft_args.batch_size    = _fc_bs
 
-            _ckpt_suffix = (f"_{Path(_ckpt_path).parent.name}" if _ckpt_path else "")
-            setting = (f"timemixer_{forecast_dataset}_pl{pred_len}"
-                       f"_dm{cfg['d_model']}_el{cfg['e_layers']}{_ckpt_suffix}")
-
-            print(f"\n[TimeMixer] Forecasting pred_len={pred_len} on {forecast_dataset} …")
-
-            _tm_train = _fc_loader('train')
-            _tm_val   = _fc_loader('val')
-            _tm_test  = _fc_loader('test')
-
-            exp = Exp_Long_Term_Forecast(ft_args)
-
-            def _get_data(self, flag):
-                loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
-                return loader.dataset, loader
-            exp._get_data = _types.MethodType(_get_data, exp)
-
-            # ── load pretrained backbone ───────────────────────────────────────
+            # ── resolve checkpoint path before building setting string ──────────
             _ckpt_path = checkpoint
             if _ckpt_path is None and ckpt_tag is not None:
                 _ckpt_path = str(
@@ -3066,6 +3049,23 @@ def run_timemixer(skip_train: bool = False,
                 print(f"  Matched: {len(_new_sd)-len(_miss)}  Missing: {len(_miss)}  Unexpected: {len(_unexp)}")
             elif _ckpt_path:
                 print(f"  [TimeMixer] WARNING: checkpoint not found: {_ckpt_path}")
+
+            _ckpt_suffix = (f"_{Path(_ckpt_path).parent.name}" if _ckpt_path else "")
+            setting = (f"timemixer_{forecast_dataset}_pl{pred_len}"
+                       f"_dm{cfg['d_model']}_el{cfg['e_layers']}{_ckpt_suffix}")
+
+            print(f"\n[TimeMixer] Forecasting pred_len={pred_len} on {forecast_dataset} …")
+
+            _tm_train = _fc_loader('train')
+            _tm_val   = _fc_loader('val')
+            _tm_test  = _fc_loader('test')
+
+            exp = Exp_Long_Term_Forecast(ft_args)
+
+            def _get_data(self, flag):
+                loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
+                return loader.dataset, loader
+            exp._get_data = _types.MethodType(_get_data, exp)
 
             if not skip_train:
                 exp.train(setting)
