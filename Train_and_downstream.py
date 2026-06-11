@@ -2877,7 +2877,9 @@ def run_timemixer(skip_train: bool = False,
                   embed_dim: int = None,
                   epochs: int = None,
                   epochs_forecasting: int = None,
-                  pretrain_source: str = None):
+                  pretrain_source: str = None,
+                  checkpoint: str = None,
+                  ckpt_tag: str = None):
     """
     TimeMixer: supervised multi-scale mixing model.
     No pretraining — trains directly on each downstream task.
@@ -3040,6 +3042,29 @@ def run_timemixer(skip_train: bool = False,
                 loader = {'train': _tm_train, 'val': _tm_val, 'test': _tm_test}[flag]
                 return loader.dataset, loader
             exp._get_data = _types.MethodType(_get_data, exp)
+
+            # ── load pretrained backbone ───────────────────────────────────────
+            _ckpt_path = checkpoint
+            if _ckpt_path is None and ckpt_tag is not None:
+                _ckpt_path = str(
+                    Path(__file__).parent /
+                    f"checkpoints_synthetic_layers{cfg['e_layers']}_{ckpt_tag}" /
+                    "checkpoint_best.pth"
+                )
+            if _ckpt_path and os.path.exists(_ckpt_path):
+                _raw = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
+                _sd  = _raw.get("teacher", _raw.get("model", _raw))
+                _new_sd = {}
+                for _k, _v in _sd.items():
+                    _k = _k.replace("module.", "")
+                    if _k.startswith("backbone."):
+                        _k = _k[len("backbone."):]
+                    _new_sd[_k] = _v
+                _miss, _unexp = exp.model.load_state_dict(_new_sd, strict=False)
+                print(f"  [TimeMixer] Loaded pretrained backbone: {_ckpt_path}")
+                print(f"  Matched: {len(_new_sd)-len(_miss)}  Missing: {len(_miss)}  Unexpected: {len(_unexp)}")
+            elif _ckpt_path:
+                print(f"  [TimeMixer] WARNING: checkpoint not found: {_ckpt_path}")
 
             if not skip_train:
                 exp.train(setting)
@@ -3684,6 +3709,7 @@ def run(model: str,
     if 'classification_dataset' in sig.parameters: kwargs['classification_dataset'] = classification_dataset
     if 'anomaly_dataset'        in sig.parameters: kwargs['anomaly_dataset']        = anomaly_dataset
     if 'checkpoint'             in sig.parameters: kwargs['checkpoint']             = checkpoint
+    if 'ckpt_tag'               in sig.parameters: kwargs['ckpt_tag']               = ckpt_tag
     if 'pretrain_source'        in sig.parameters: kwargs['pretrain_source']        = pretrain_source
     if 'gpu'                    in sig.parameters: kwargs['gpu']                    = gpu
     if 'num_patches'            in sig.parameters: kwargs['num_patches']            = num_patches
