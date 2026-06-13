@@ -45,15 +45,15 @@ config = {
 
     # ── DINO loss / teacher temperatures ─────────────────────────────────────
     "warmup_teacher_temp": 0.04,
-    "teacher_temp": 0.04,
-    "warmup_teacher_temp_epochs": 0,
+    "teacher_temp": 0.07,
+    "warmup_teacher_temp_epochs": 10,
 
     # ── EMA teacher ───────────────────────────────────────────────────────────
     "momentum_teacher": 0.9995,     # base EMA, cosine-scheduled up to 1.0
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     "optimizer": "adamw",           # "adamw" | "sgd"
-    "lr": 5e-4,
+    "lr": 2e-4,
     "min_lr": 1e-6,
     "warmup_epochs": 1,
     "weight_decay": 0.04,
