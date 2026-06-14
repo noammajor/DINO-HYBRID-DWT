@@ -55,7 +55,7 @@ config = {
     "optimizer": "adamw",           # "adamw" | "sgd"
     "lr": 2e-4,
     "min_lr": 1e-6,
-    "warmup_epochs": 1,
+    "warmup_epochs": 3,
     "weight_decay": 0.04,
     "weight_decay_end": 0.1,
     "clip_grad": 3.0,

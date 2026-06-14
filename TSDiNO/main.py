@@ -530,6 +530,11 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                         _mlm_loss  = F.mse_loss(_pred, _gt_masked)
                         metric_logger.update(mae_loss=_mlm_loss.item())
                     loss = mlm_phi * loss + (1.0 - mlm_phi) * _mlm_loss
+                    print(f'DINO: {_dino_loss_val:.4f}  MLM: {_mlm_loss.item():.4f}  combined: {loss.item():.4f}')
+                else:
+                    print(f'DINO: {_dino_loss_val:.4f}  MLM: 0.0000  combined: {loss.item():.4f}')
+            else:
+                print(f'DINO: {_dino_loss_val:.4f}')
 
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
@@ -619,7 +624,6 @@ class DINOLoss(nn.Module):
                 n_loss_terms += 1
         total_loss /= n_loss_terms
         self.update_center(teacher_output)
-        print('DINO loss:', total_loss.item())
         return total_loss
 
     @torch.no_grad()
