@@ -39,14 +39,14 @@ config = {
     "drop_path_rate": 0.1,
 
     # ── DINO head ─────────────────────────────────────────────────────────────
-    "out_dim": 2048,
+    "out_dim": 8192,
     "use_bn_in_head": False,
     "norm_last_layer": True,
 
     # ── DINO loss / teacher temperatures ─────────────────────────────────────
     "warmup_teacher_temp": 0.04,
-    "teacher_temp": 0.07,
-    "warmup_teacher_temp_epochs": 10,
+    "teacher_temp": 0.04,
+    "warmup_teacher_temp_epochs": 0,
 
     # ── EMA teacher ───────────────────────────────────────────────────────────
     "momentum_teacher": 0.9995,     # base EMA, cosine-scheduled up to 1.0
