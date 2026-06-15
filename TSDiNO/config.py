@@ -44,8 +44,8 @@ config = {
     "norm_last_layer": True,
 
     # ── DINO loss / teacher temperatures ─────────────────────────────────────
-    "warmup_teacher_temp": 0.07,   # lowered teacher sharpness 0.04 -> 0.07 (softer targets, anti-collapse)
-    "teacher_temp": 0.07,          # lowered teacher sharpness 0.04 -> 0.07
+    "warmup_teacher_temp": 0.04,   # back to 0.04 (0.07 too soft — killed learning)
+    "teacher_temp": 0.04,          # back to 0.04
     "warmup_teacher_temp_epochs": 0,
 
     # ── Anti-collapse regularizers on the global student feature (optional) ────
@@ -166,8 +166,8 @@ config = {
 
     # ── Teacher view (global crop) ────────────────────────────────────────────
     "global_crops": [
-        {"type": "dwt_low_pass", "crop_ratio": 1.0},
-    ],
+        {"type": "dwt_soft_threshold", "crop_ratio": 1.0},
+    ], #changed from low_pass to soft_threshold --- low_pass caused teacher collapse on synthetic; re-testing stability on etth1
 
     # ── Student view (local crop) ─────────────────────────────────────────────
     "local_crops": [
