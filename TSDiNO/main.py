@@ -586,12 +586,15 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                             cfg.get('vicreg_cov_coeff', 0.04))
                 if cfg.get('use_koleo', False):
                     _kl = _kl_sum / n_global
-                    loss = loss + cfg.get('koleo_weight', 0.1) * _kl
+                    _kw = cfg.get('koleo_weight', 0.1)
+                    loss = loss + _kw * _kl
                     metric_logger.update(koleo_loss=_kl.item())
+                    print(f'KoLeo: {_kl.item():.4f}  (w={_kw})  -> +{(_kw*_kl).item():.4f}')
                 if cfg.get('use_vicreg', False):
                     _vc = _vc_sum / n_global
                     loss = loss + _vc
                     metric_logger.update(vicreg_loss=_vc.item())
+                    print(f'VICReg: {_vc.item():.4f}  (std={cfg.get("vicreg_std_coeff",1.0)} cov={cfg.get("vicreg_cov_coeff",0.04)})')
 
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
