@@ -97,7 +97,7 @@ config = {
     "dwt_soft_threshold_sigma":     0.6,            # bumped: 0.3 → 0.6 (more aggressive teacher smoothing)
     "dwt_zero_out_ratio":           0.4,
     "dwt_finest_levels":            3,              # bumped: 2 → 3 (student perturbs three finest bands)
-    "dwt_high_perturb_noise_range": (0.25,0.50),   # aggressive: previously caused PatchTST DINO collapse on synthetic — re-testing stability on etth1
+    "dwt_high_perturb_noise_range": (0.05, 0.12),  # gentler student noise (TSDiNO1 working value) — testing if (0.25,0.50) was the collapse driver
     "dwt_band_scale_approx_range":  (0.80, 1.20),  # wider: (0.9,1.1) → (0.80,1.20)
     "dwt_band_scale_detail_range":  (0.40, 1.60),  # wider: (0.6,1.4) → (0.40,1.60)
 
