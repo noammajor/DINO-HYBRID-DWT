@@ -27,14 +27,17 @@ K   = 40
 DB_FAMILY = ['db4', 'db6', 'db8']
 
 
-def make_aug(mode, wav):
+AGG, GENTLE = (0.25, 0.50), (0.05, 0.12)        # current config vs TSDiNO1 student noise
+
+def make_aug(mode, wav, noise_range=None):
     """Real DWTAugmentation built from config params, forced to wavelet `wav`."""
     return DWTAugmentation(
         wavelet=wav, level=cfg['dwt_level'], mode=mode,
         soft_threshold_sigma=cfg['dwt_soft_threshold_sigma'],
         zero_out_ratio=cfg['dwt_zero_out_ratio'],
         finest_levels=cfg['dwt_finest_levels'],
-        high_perturb_noise_range=cfg['dwt_high_perturb_noise_range'],
+        high_perturb_noise_range=noise_range if noise_range is not None
+                                 else cfg['dwt_high_perturb_noise_range'],
         band_scale_approx_range=cfg['dwt_band_scale_approx_range'],
         band_scale_detail_range=cfg['dwt_band_scale_detail_range'],
         wavelet_pool=[wav],
@@ -46,8 +49,9 @@ def apply_aug(aug, s):
     y = y.detach().cpu().numpy() if hasattr(y, 'detach') else np.asarray(y)
     return y.reshape(-1)
 
-def low_pass(s, wav):    return apply_aug(make_aug('low_pass', wav), s)
-def soft_thresh(s, wav): return apply_aug(make_aug('soft_threshold', wav), s)
+def low_pass(s, wav):        return apply_aug(make_aug('low_pass', wav), s)
+def soft_thresh(s, wav):     return apply_aug(make_aug('soft_threshold', wav), s)
+def high_perturb(s, wav, nr): return apply_aug(make_aug('high_perturb', wav, nr), s)
 
 
 def load_synth(data_dir, k):
@@ -128,3 +132,32 @@ for r, (nm, s) in enumerate(datasets):
         a.grid(alpha=0.3); a.legend(fontsize=7)
 plt.tight_layout(); plt.savefig("logs/demo_aug_real.png", dpi=150)
 print("Saved logs/demo_aug_real.png")
+
+
+# ── STUDENT view (high_perturb): aggressive (0.25-0.50) vs gentle (0.05-0.12) ──
+def fidelity(o, a):    return float(np.corrcoef(o, a)[0, 1])      # 1 = original intact
+def noise_ratio(o, a): return float(np.var(a - o) / (np.var(o) + 1e-12))
+
+print("\nSTUDENT view (high_perturb) — fidelity = corr with original (1=untouched), "
+      "noise/signal = added-noise variance ratio\n")
+for wav in DB_FAMILY:
+    for name, series in [("synthetic", syn), ("etth1", ett)]:
+        for tag, nr in [("aggr  ", AGG), ("gentle", GENTLE)]:
+            f = np.mean([fidelity(s, high_perturb(s, wav, nr))    for s in series])
+            n = np.mean([noise_ratio(s, high_perturb(s, wav, nr)) for s in series])
+            print(f"  {wav} {name:10s} [{tag} {nr}] fidelity {f:.3f}   noise/signal {n:.2f}")
+    print()
+
+fig, ax = plt.subplots(len(datasets), len(DB_FAMILY),
+                       figsize=(5 * len(DB_FAMILY), 4 * len(datasets)), squeeze=False)
+for r, (nm, s) in enumerate(datasets):
+    for c, wav in enumerate(DB_FAMILY):
+        a = ax[r][c]
+        ag, ge = high_perturb(s, wav, AGG), high_perturb(s, wav, GENTLE)
+        a.plot(s,  lw=1.4, color='gray',     label="original")
+        a.plot(ge, lw=1.0, alpha=0.85, color='tab:blue', label=f"gentle 0.05-0.12 (fid {fidelity(s, ge):.2f})")
+        a.plot(ag, lw=0.9, alpha=0.85, color='tab:red',  label=f"aggr 0.25-0.50 (fid {fidelity(s, ag):.2f})")
+        a.set_title(f"{nm} — {wav} (student view)")
+        a.grid(alpha=0.3); a.legend(fontsize=7)
+plt.tight_layout(); plt.savefig("logs/demo_aug_student.png", dpi=150)
+print("Saved logs/demo_aug_student.png")
