@@ -63,7 +63,7 @@ config = {
     "freeze_last_layer": 1,
 
     # ── DINO pretraining ──────────────────────────────────────────────────────
-    "epochs": 21,
+    "epochs": 50,
 
     # ── DWT defaults (shared across all dwt_* aug types) ─────────────────────
     #
@@ -221,8 +221,8 @@ config = {
     "tsmixer_top_k":                5,    # DFT top-k components (only for decomp_method='dft_decomp')
 
     # ── Pretraining data source ───────────────────────────────────────────────
-    # pretrain_source: "monash" | "synthetic" | "monash+synthetic"
-    "pretrain_source":    "synthetic",
+    # pretrain_source: "monash" | "synthetic" | "monash+synthetic" | None (in-domain CSV)
+    "pretrain_source":    None,
 
     # ── Distributed ───────────────────────────────────────────────────────────
     "dist_url": "env://",
