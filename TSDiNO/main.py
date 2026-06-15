@@ -27,6 +27,38 @@ import matplotlib.pyplot as plt
 from torch.utils.data import ConcatDataset
 
 
+def koleo_loss(x, eps=1e-8):
+    """Kozachenko-Leonenko entropic regularizer (DINOv2).
+
+    Spreads features apart by penalizing the (log) nearest-neighbor distance
+    within the batch — directly counters representation collapse.
+    x: [N, D] feature batch.
+    """
+    x = F.normalize(x, p=2, dim=-1, eps=eps)
+    dots = torch.mm(x, x.t())
+    n = x.shape[0]
+    dots.view(-1)[::(n + 1)].fill_(-1)           # exclude self-similarity on diagonal
+    nn_idx  = dots.max(dim=1).indices            # nearest neighbour (max cosine sim)
+    nn_dist = (x - x[nn_idx]).norm(dim=1)
+    return -torch.log(nn_dist + eps).mean()
+
+
+def vicreg_loss(x, std_coeff=1.0, cov_coeff=0.04, eps=1e-4):
+    """VICReg variance + covariance regularization on a [N, D] feature batch.
+
+    Variance term keeps each dim's std near 1 (anti-collapse); covariance term
+    decorrelates dims. The invariance term is omitted — DINO already aligns the
+    student/teacher views.
+    """
+    x = x - x.mean(dim=0, keepdim=True)
+    std      = torch.sqrt(x.var(dim=0) + eps)
+    std_term = torch.mean(F.relu(1.0 - std))
+    n, d     = x.shape
+    cov      = (x.t() @ x) / (n - 1)
+    cov_term = (cov.pow(2).sum() - cov.diagonal().pow(2).sum()) / d
+    return std_coeff * std_term + cov_coeff * cov_term
+
+
 def train_TS_DINO(args):
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
@@ -535,6 +567,31 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                     print(f'DINO: {_dino_loss_val:.4f}  MLM: 0.0000  combined: {loss.item():.4f}')
             else:
                 print(f'DINO: {_dino_loss_val:.4f}')
+
+            # ── Anti-collapse regularizers on the global student feature ──────
+            # Optional (cfg toggles, default off → skipped). Re-encodes the
+            # global crop(s) through the backbone to get the pre-head embedding,
+            # then spreads it out. Works for dino / dino+mae / dino+ibot.
+            if cfg.get('use_koleo', False) or cfg.get('use_vicreg', False):
+                _bb = student_without_ddp.backbone
+                _kl_sum = _vc_sum = 0.0
+                for _gi in range(n_global):
+                    _gf = _bb(dino_samples[_gi])                 # [B, C, d_model]
+                    _gf = _gf.reshape(_gf.shape[0], -1)          # [B, C*d_model]
+                    if cfg.get('use_koleo', False):
+                        _kl_sum = _kl_sum + koleo_loss(_gf)
+                    if cfg.get('use_vicreg', False):
+                        _vc_sum = _vc_sum + vicreg_loss(
+                            _gf, cfg.get('vicreg_std_coeff', 1.0),
+                            cfg.get('vicreg_cov_coeff', 0.04))
+                if cfg.get('use_koleo', False):
+                    _kl = _kl_sum / n_global
+                    loss = loss + cfg.get('koleo_weight', 0.1) * _kl
+                    metric_logger.update(koleo_loss=_kl.item())
+                if cfg.get('use_vicreg', False):
+                    _vc = _vc_sum / n_global
+                    loss = loss + _vc
+                    metric_logger.update(vicreg_loss=_vc.item())
 
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)

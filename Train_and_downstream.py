@@ -237,6 +237,11 @@ def run_dino(skip_train: bool = False,
              mlm_mode: str = None,
              backbone_type: str = None,
              dwt_wavelet_pool: list = None,
+             use_koleo: bool = None,
+             koleo_weight: float = None,
+             use_vicreg: bool = None,
+             vicreg_std_coeff: float = None,
+             vicreg_cov_coeff: float = None,
              lr_forecasting: float = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
@@ -318,6 +323,16 @@ def run_dino(skip_train: bool = False,
         dino_cfg['backbone_type'] = backbone_type
     if dwt_wavelet_pool is not None:
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
+    if use_koleo is not None:
+        dino_cfg['use_koleo'] = use_koleo
+    if koleo_weight is not None:
+        dino_cfg['koleo_weight'] = koleo_weight
+    if use_vicreg is not None:
+        dino_cfg['use_vicreg'] = use_vicreg
+    if vicreg_std_coeff is not None:
+        dino_cfg['vicreg_std_coeff'] = vicreg_std_coeff
+    if vicreg_cov_coeff is not None:
+        dino_cfg['vicreg_cov_coeff'] = vicreg_cov_coeff
     if seed is not None:
         dino_cfg['seed'] = seed
     pretrain_source = _resolve_pretrain_source(dino_cfg)
@@ -3641,6 +3656,11 @@ def run(model: str,
         mlm_mode: str = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
+        use_koleo: bool = None,
+        koleo_weight: float = None,
+        use_vicreg: bool = None,
+        vicreg_std_coeff: float = None,
+        vicreg_cov_coeff: float = None,
         phi: float = None,
         lr_forecasting: float = None):
     """
@@ -3743,6 +3763,11 @@ def run(model: str,
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
+    if 'use_koleo'             in sig.parameters: kwargs['use_koleo']             = use_koleo
+    if 'koleo_weight'          in sig.parameters: kwargs['koleo_weight']          = koleo_weight
+    if 'use_vicreg'            in sig.parameters: kwargs['use_vicreg']            = use_vicreg
+    if 'vicreg_std_coeff'      in sig.parameters: kwargs['vicreg_std_coeff']      = vicreg_std_coeff
+    if 'vicreg_cov_coeff'      in sig.parameters: kwargs['vicreg_cov_coeff']      = vicreg_cov_coeff
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
@@ -3836,6 +3861,16 @@ if __name__ == "__main__":
                         help="patchtst | tsmixer — overrides config (default: patchtst)")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="Wavelet pool for random-per-sample DWT aug (e.g. sym4 sym6 sym8)")
+    parser.add_argument("--use_koleo", type=str, default=None,
+                        help="true|false — enable KoLeo regularizer on global feature (DINO only)")
+    parser.add_argument("--koleo_weight", type=float, default=None,
+                        help="KoLeo scalar weight (default 0.1 from config)")
+    parser.add_argument("--use_vicreg", type=str, default=None,
+                        help="true|false — enable VICReg var+cov regularizer on global feature (DINO only)")
+    parser.add_argument("--vicreg_std_coeff", type=float, default=None,
+                        help="VICReg variance term weight")
+    parser.add_argument("--vicreg_cov_coeff", type=float, default=None,
+                        help="VICReg covariance term weight")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -3865,6 +3900,11 @@ if __name__ == "__main__":
         mlm_mode=args.mlm_mode,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
+        use_koleo=(args.use_koleo.lower() == "true") if args.use_koleo is not None else None,
+        koleo_weight=args.koleo_weight,
+        use_vicreg=(args.use_vicreg.lower() == "true") if args.use_vicreg is not None else None,
+        vicreg_std_coeff=args.vicreg_std_coeff,
+        vicreg_cov_coeff=args.vicreg_cov_coeff,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",

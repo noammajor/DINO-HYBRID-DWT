@@ -44,9 +44,18 @@ config = {
     "norm_last_layer": True,
 
     # ── DINO loss / teacher temperatures ─────────────────────────────────────
-    "warmup_teacher_temp": 0.04,
-    "teacher_temp": 0.04,
+    "warmup_teacher_temp": 0.07,   # lowered teacher sharpness 0.04 -> 0.07 (softer targets, anti-collapse)
+    "teacher_temp": 0.07,          # lowered teacher sharpness 0.04 -> 0.07
     "warmup_teacher_temp_epochs": 0,
+
+    # ── Anti-collapse regularizers on the global student feature (optional) ────
+    # Both default OFF. Applied to the pre-head global DINO embedding, so they
+    # work for dino-only, dino+mae and dino+ibot alike. Zero overhead when off.
+    "use_koleo":        False,   # KoLeo entropic regularizer (DINOv2)
+    "koleo_weight":     0.1,     # scalar weight when use_koleo=True
+    "use_vicreg":       False,   # VICReg variance+covariance regularizer (invariance handled by DINO)
+    "vicreg_std_coeff": 1.0,     # variance (hinge) term weight when use_vicreg=True
+    "vicreg_cov_coeff": 0.04,    # covariance term weight when use_vicreg=True
 
     # ── EMA teacher ───────────────────────────────────────────────────────────
     "momentum_teacher": 0.9995,     # base EMA, cosine-scheduled up to 1.0
