@@ -44,9 +44,12 @@ config = {
     "norm_last_layer": True,
 
     # ── DINO loss / teacher temperatures ─────────────────────────────────────
-    "warmup_teacher_temp": 0.04,   # back to 0.04 (0.07 too soft — killed learning)
-    "teacher_temp": 0.04,          # back to 0.04
-    "warmup_teacher_temp_epochs": 0,
+    # Warm up teacher temp from soft→sharp: softer early (0.06) avoids the
+    # uniform collapse seen on the large synthetic set, then sharpens to 0.04 to
+    # keep the learning signal (flat 0.07 was too soft and killed learning).
+    "warmup_teacher_temp": 0.06,   # softer start (anti-collapse)
+    "teacher_temp": 0.04,          # sharpen to 0.04 after warmup
+    "warmup_teacher_temp_epochs": 5,
 
     # ── Anti-collapse regularizers on the global student feature (optional) ────
     # Both default OFF. Applied to the pre-head global DINO embedding, so they
@@ -58,11 +61,11 @@ config = {
     "vicreg_cov_coeff": 0.04,    # covariance term weight when use_vicreg=True
 
     # ── EMA teacher ───────────────────────────────────────────────────────────
-    "momentum_teacher": 0.9995,     # base EMA, cosine-scheduled up to 1.0
+    "momentum_teacher": 0.9998,     # slower EMA — large epochs (~150k steps) need a slower teacher to stay a stable target; cosine-scheduled up to 1.0
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     "optimizer": "adamw",           # "adamw" | "sgd"
-    "lr": 2e-4,
+    "lr": 1e-4,                     # halved (peak ~5e-5 after batch scaling) — collapse fired exactly when LR hit its peak
     "min_lr": 1e-6,
     "warmup_epochs": 3,
     "weight_decay": 0.04,

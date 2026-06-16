@@ -528,7 +528,11 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 _s_tok = student_without_ddp.backbone.forward_ibot(_mlm_in, _pmask)
                 # [B, NP, n_vars, d_model]
                 _B2, _NP2, _NV, _DM = _s_tok.shape
-                _mexp = _pmask.unsqueeze(2).expand(-1, -1, _NV).reshape(_B2*_NV, _NP2)
+                # Row order must match permute(0,2,1,3) below (B, n_vars, NP) and the
+                # masking the backbone applies internally via
+                # mask.unsqueeze(1).expand(-1, n_vars, -1). Using unsqueeze(2) here
+                # scrambles masked positions relative to the tokens.
+                _mexp = _pmask.unsqueeze(1).expand(-1, _NV, -1).reshape(_B2*_NV, _NP2)
                 _s_all = _s_tok.permute(0,2,1,3).reshape(_B2*_NV, _NP2, _DM)
                 _s_masked = _s_all[_mexp]   # [N_masked, d_model]
                 if _s_masked.shape[0] > 0:
