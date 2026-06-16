@@ -61,7 +61,7 @@ config = {
     "vicreg_cov_coeff": 0.04,    # covariance term weight when use_vicreg=True
 
     # ── EMA teacher ───────────────────────────────────────────────────────────
-    "momentum_teacher": 0.9998,     # slower EMA — large epochs (~150k steps) need a slower teacher to stay a stable target; cosine-scheduled up to 1.0
+    "momentum_teacher": 0.9996,     # base EMA (cosine-scheduled up to 1.0)
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     "optimizer": "adamw",           # "adamw" | "sgd"
