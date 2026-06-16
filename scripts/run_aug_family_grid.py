@@ -45,6 +45,7 @@ ENCODER_LAYERS = 4
 EPOCHS         = 80
 LR             = 5e-4
 MLM_PHI        = 0.6          # weight for DINO+iBOT / DINO+MAE blends (phi*DINO + (1-phi)*MLM)
+SEED           = 42          # fixed seed for all runs (overridable via --seed); also tags checkpoints _seedN
 
 DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather", "electricity"]
 
@@ -76,6 +77,7 @@ def _common_flags(objective: str, family: str, dataset: str, ckpt_tag: str) -> l
         ["--model", "dino",
          "--backbone_type", BACKBONE,
          "--encoder_layers", str(ENCODER_LAYERS),
+         "--seed", str(SEED),
          "--ckpt_tag", ckpt_tag]
         + OBJECTIVES[objective]
         + FAMILIES[family]
@@ -146,6 +148,7 @@ def _pipeline(objective, family, gpu, datasets, root, skip_pretrain, dry_run):
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
+    global SEED
     p = argparse.ArgumentParser(description="DWT-aug × objective × dataset in-domain grid")
     p.add_argument("--root", required=True, help="Root tag for logs/checkpoints folder")
     p.add_argument("--gpus", nargs="+", type=int, required=True,
@@ -153,9 +156,11 @@ def main():
     p.add_argument("--families",   nargs="+", default=FAMILY_ORDER,    choices=FAMILY_ORDER)
     p.add_argument("--objectives", nargs="+", default=OBJECTIVE_ORDER, choices=OBJECTIVE_ORDER)
     p.add_argument("--datasets",   nargs="+", default=DATASETS)
+    p.add_argument("--seed",       type=int, default=SEED)
     p.add_argument("--skip_pretrain", action="store_true")
     p.add_argument("--dry_run",       action="store_true")
     args = p.parse_args()
+    SEED = args.seed
 
     if len(args.gpus) != len(args.families):
         p.error(f"--gpus ({len(args.gpus)}) must match number of families ({len(args.families)})")
@@ -163,7 +168,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"  AUG-FAMILY GRID   root={args.root}")
-    print(f"  backbone={BACKBONE}  layers={ENCODER_LAYERS}  epochs={EPOCHS}  lr={LR}  mlm_phi={MLM_PHI}")
+    print(f"  backbone={BACKBONE}  layers={ENCODER_LAYERS}  epochs={EPOCHS}  lr={LR}  mlm_phi={MLM_PHI}  seed={SEED}")
     print(f"  families→gpu: {fam_gpu}")
     print(f"  objectives:   {args.objectives}   (concurrent per GPU)")
     print(f"  datasets:     {args.datasets}     (sequential per objective)")
