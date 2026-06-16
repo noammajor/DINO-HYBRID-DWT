@@ -50,8 +50,10 @@ SEED           = 42          # fixed seed for all runs (overridable via --seed);
 DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather", "electricity"]
 
 # Objective → extra flags. dino = pure DINO (MLM off).
+# NOTE: must pass --mlm_phi 0.0 explicitly — omitting it falls back to config's
+# mlm_phi (0.75), which silently turns "dino" into DINO+iBOT and blows up memory.
 OBJECTIVES = {
-    "dino": [],
+    "dino": ["--mlm_phi", "0.0"],
     "ibot": ["--mlm_phi", str(MLM_PHI), "--mlm_mode", "ibot"],
     "mae":  ["--mlm_phi", str(MLM_PHI), "--mlm_mode", "mae"],
 }
@@ -145,6 +147,13 @@ def _pipeline(objective, family, gpu, datasets, root, skip_pretrain, dry_run):
     print(f"  [{family}/{objective}] pipeline complete.")
 
 
+def _family_pipeline_sequential(objectives, family, gpu, datasets, root, skip_pretrain, dry_run):
+    """Run the family's objectives one-at-a-time on its GPU (only one resident run)."""
+    for objective in objectives:
+        _pipeline(objective, family, gpu, datasets, root, skip_pretrain, dry_run)
+    print(f"  [{family}] all objectives complete.")
+
+
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -157,6 +166,9 @@ def main():
     p.add_argument("--objectives", nargs="+", default=OBJECTIVE_ORDER, choices=OBJECTIVE_ORDER)
     p.add_argument("--datasets",   nargs="+", default=DATASETS)
     p.add_argument("--seed",       type=int, default=SEED)
+    p.add_argument("--sequential", action="store_true",
+                   help="Run the 3 objectives one-at-a-time per GPU (only one heavy run resident). "
+                        "Use if iBOT/MAE OOM when run concurrently.")
     p.add_argument("--skip_pretrain", action="store_true")
     p.add_argument("--dry_run",       action="store_true")
     args = p.parse_args()
@@ -170,7 +182,8 @@ def main():
     print(f"  AUG-FAMILY GRID   root={args.root}")
     print(f"  backbone={BACKBONE}  layers={ENCODER_LAYERS}  epochs={EPOCHS}  lr={LR}  mlm_phi={MLM_PHI}  seed={SEED}")
     print(f"  families→gpu: {fam_gpu}")
-    print(f"  objectives:   {args.objectives}   (concurrent per GPU)")
+    _obj_mode = "sequential per GPU" if args.sequential else "concurrent per GPU"
+    print(f"  objectives:   {args.objectives}   ({_obj_mode})")
     print(f"  datasets:     {args.datasets}     (sequential per objective)")
     print(f"  total pipelines: {len(args.families)*len(args.objectives)*len(args.datasets)}")
     if args.dry_run:
@@ -179,15 +192,27 @@ def main():
 
     threads = []
     for family in args.families:
-        for objective in args.objectives:
+        if args.sequential:
+            # One thread per family; its objectives run one-at-a-time.
             t = threading.Thread(
-                target=_pipeline,
-                args=(objective, family, fam_gpu[family], args.datasets,
+                target=_family_pipeline_sequential,
+                args=(args.objectives, family, fam_gpu[family], args.datasets,
                       args.root, args.skip_pretrain, args.dry_run),
-                name=f"{family}/{objective}", daemon=True,
+                name=f"{family}", daemon=True,
             )
             threads.append(t)
             t.start()
+        else:
+            # One thread per (family, objective); objectives run concurrently.
+            for objective in args.objectives:
+                t = threading.Thread(
+                    target=_pipeline,
+                    args=(objective, family, fam_gpu[family], args.datasets,
+                          args.root, args.skip_pretrain, args.dry_run),
+                    name=f"{family}/{objective}", daemon=True,
+                )
+                threads.append(t)
+                t.start()
 
     for t in threads:
         t.join()
