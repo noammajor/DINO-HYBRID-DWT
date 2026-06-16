@@ -242,6 +242,8 @@ def run_dino(skip_train: bool = False,
              use_vicreg: bool = None,
              vicreg_std_coeff: float = None,
              vicreg_cov_coeff: float = None,
+             synthetic_data_dir: str = None,
+             subset_frac: float = None,
              lr_forecasting: float = None):
     dino_dir  = Path(__file__).parent / "TSDiNO"
     shared_dir = Path(__file__).parent / "shared"
@@ -321,6 +323,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_mode'] = mlm_mode
     if backbone_type is not None:
         dino_cfg['backbone_type'] = backbone_type
+    if synthetic_data_dir is not None:
+        dino_cfg['synthetic_data_dir'] = synthetic_data_dir
+    if subset_frac is not None:
+        dino_cfg['pretrain_subset_frac'] = subset_frac
     if dwt_wavelet_pool is not None:
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
     if use_koleo is not None:
@@ -3661,6 +3667,8 @@ def run(model: str,
         use_vicreg: bool = None,
         vicreg_std_coeff: float = None,
         vicreg_cov_coeff: float = None,
+        synthetic_data_dir: str = None,
+        subset_frac: float = None,
         phi: float = None,
         lr_forecasting: float = None):
     """
@@ -3768,6 +3776,8 @@ def run(model: str,
     if 'use_vicreg'            in sig.parameters: kwargs['use_vicreg']            = use_vicreg
     if 'vicreg_std_coeff'      in sig.parameters: kwargs['vicreg_std_coeff']      = vicreg_std_coeff
     if 'vicreg_cov_coeff'      in sig.parameters: kwargs['vicreg_cov_coeff']      = vicreg_cov_coeff
+    if 'synthetic_data_dir'    in sig.parameters: kwargs['synthetic_data_dir']    = synthetic_data_dir
+    if 'subset_frac'           in sig.parameters: kwargs['subset_frac']           = subset_frac
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
@@ -3871,6 +3881,10 @@ if __name__ == "__main__":
                         help="VICReg variance term weight")
     parser.add_argument("--vicreg_cov_coeff", type=float, default=None,
                         help="VICReg covariance term weight")
+    parser.add_argument("--synthetic_data_dir", type=str, default=None,
+                        help="Override synthetic .arrow data dir (DINO synthetic pretraining only)")
+    parser.add_argument("--subset_frac", type=float, default=None,
+                        help="Train on a fresh random fraction of the pretrain windows each epoch (e.g. 0.25). DINO only.")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -3905,6 +3919,8 @@ if __name__ == "__main__":
         use_vicreg=(args.use_vicreg.lower() == "true") if args.use_vicreg is not None else None,
         vicreg_std_coeff=args.vicreg_std_coeff,
         vicreg_cov_coeff=args.vicreg_cov_coeff,
+        synthetic_data_dir=args.synthetic_data_dir,
+        subset_frac=args.subset_frac,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",
