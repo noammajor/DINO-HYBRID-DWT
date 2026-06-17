@@ -76,7 +76,7 @@ _python = str(Path(sys.executable).parent / "python")
 
 def _common_flags(objective: str, family: str, dataset: str, ckpt_tag: str) -> list:
     return (
-        ["--model", "dino",
+        ["--model", "dino_timemixer",
          "--backbone_type", BACKBONE,
          "--encoder_layers", str(ENCODER_LAYERS),
          "--seed", str(SEED),
