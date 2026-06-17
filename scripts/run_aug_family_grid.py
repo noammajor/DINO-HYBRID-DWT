@@ -40,7 +40,8 @@ ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
 # ── grid definition ────────────────────────────────────────────────────────────
-BACKBONE       = "tsmixer"
+MODEL          = "dino_timemixer"   # overridable via --model (e.g. dino_ts2vec, dino_patchtst)
+BACKBONE       = "tsmixer"          # overridable via --backbone_type; "none" → don't pass the flag
 ENCODER_LAYERS = 4
 EPOCHS         = 80
 LR             = 5e-4
@@ -75,15 +76,13 @@ _python = str(Path(sys.executable).parent / "python")
 # ── command builders ───────────────────────────────────────────────────────────
 
 def _common_flags(objective: str, family: str, dataset: str, ckpt_tag: str) -> list:
-    return (
-        ["--model", "dino_timemixer",
-         "--backbone_type", BACKBONE,
-         "--encoder_layers", str(ENCODER_LAYERS),
-         "--seed", str(SEED),
-         "--ckpt_tag", ckpt_tag]
-        + OBJECTIVES[objective]
-        + FAMILIES[family]
-    )
+    flags = ["--model", MODEL,
+             "--encoder_layers", str(ENCODER_LAYERS),
+             "--seed", str(SEED),
+             "--ckpt_tag", ckpt_tag]
+    if BACKBONE and BACKBONE.lower() != "none":
+        flags += ["--backbone_type", BACKBONE]
+    return flags + OBJECTIVES[objective] + FAMILIES[family]
 
 
 def pretrain_cmd(objective, family, dataset, ckpt_tag) -> list:
@@ -157,11 +156,16 @@ def _family_pipeline_sequential(objectives, family, gpu, datasets, root, skip_pr
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    global SEED
+    global SEED, MODEL, BACKBONE
     p = argparse.ArgumentParser(description="DWT-aug × objective × dataset in-domain grid")
     p.add_argument("--root", required=True, help="Root tag for logs/checkpoints folder")
     p.add_argument("--gpus", nargs="+", type=int, required=True,
-                   help=f"One GPU per family, in order {FAMILY_ORDER} (e.g. --gpus 3 4 5)")
+                   help=f"One GPU per family, in order {FAMILY_ORDER} (e.g. --gpus 3 4 5). "
+                        f"Repeat a GPU to pack families onto it (e.g. --gpus 5 5 5).")
+    p.add_argument("--model", default=MODEL,
+                   help=f"Runner model (default {MODEL}; e.g. dino_ts2vec, dino_patchtst)")
+    p.add_argument("--backbone_type", default=BACKBONE,
+                   help=f"backbone_type flag (default {BACKBONE}; 'none' to omit — use for dino_ts2vec)")
     p.add_argument("--families",   nargs="+", default=FAMILY_ORDER,    choices=FAMILY_ORDER)
     p.add_argument("--objectives", nargs="+", default=OBJECTIVE_ORDER, choices=OBJECTIVE_ORDER)
     p.add_argument("--datasets",   nargs="+", default=DATASETS)
@@ -173,6 +177,8 @@ def main():
     p.add_argument("--dry_run",       action="store_true")
     args = p.parse_args()
     SEED = args.seed
+    MODEL = args.model
+    BACKBONE = args.backbone_type
 
     if len(args.gpus) != len(args.families):
         p.error(f"--gpus ({len(args.gpus)}) must match number of families ({len(args.families)})")
@@ -180,7 +186,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"  AUG-FAMILY GRID   root={args.root}")
-    print(f"  backbone={BACKBONE}  layers={ENCODER_LAYERS}  epochs={EPOCHS}  lr={LR}  mlm_phi={MLM_PHI}  seed={SEED}")
+    print(f"  model={MODEL}  backbone={BACKBONE}  layers={ENCODER_LAYERS}  epochs={EPOCHS}  lr={LR}  mlm_phi={MLM_PHI}  seed={SEED}")
     print(f"  families→gpu: {fam_gpu}")
     _obj_mode = "sequential per GPU" if args.sequential else "concurrent per GPU"
     print(f"  objectives:   {args.objectives}   ({_obj_mode})")

@@ -2,7 +2,13 @@
 
 Exposes the same interface the DINO pipeline already calls on the PatchTST backbone
 (`forward`, `forward_recon`, `forward_ibot`, and the attrs `d_model`, `patch_len`,
-`n_vars`, `mask_token`, `head`, `backbone`) so it is a drop-in third backbone.
+`n_vars`, `mask_token`, `cls_query`, `head`, `backbone`) so it is a drop-in third backbone.
+
+The global DINO embedding comes from cross-attention pooling (mirroring the TimeMixer
+backbone): a single learnable CLS query attends over all T conv-encoder tokens. Running
+attention on top of the conv stack makes the global token see the whole window at any
+depth — unlike a CLS baked into the conv, which is bounded by the receptive field. The
+per-timestep tokens are returned unchanged for iBOT / MAE / reconstruction.
 
 TS2Vec is channel-MIXED and timestep-tokenised: the full multivariate series
 [B, T, C] goes into `TSEncoder` (input_dims=C) and out come per-timestep
@@ -69,6 +75,14 @@ class TS2VecForDINO(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, hidden_dims))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
 
+        # Cross-attention global pooling (mirrors the TimeMixer backbone): a single learnable
+        # CLS query attends over all T encoder tokens to form the global DINO embedding. Running
+        # attention on TOP of the conv encoder makes the global token see the whole window at any
+        # depth — unlike a CLS baked into the conv stack, which is bounded by the receptive field.
+        self.cls_query   = nn.Parameter(torch.zeros(1, 1, d_model))
+        nn.init.trunc_normal_(self.cls_query, std=0.02)
+        self.global_attn = nn.MultiheadAttention(d_model, num_heads=4, dropout=0.0, batch_first=True)
+
         # instance norm for the forecasting head (mirrors PatchTST)
         self.normalization = RevIN(c_in, affine=True)
 
@@ -93,42 +107,17 @@ class TS2VecForDINO(nn.Module):
             z = z.reshape(B, P * PL, C)
         return z
 
-    def _encode(self, z):
-        # 'all_true' disables TS2Vec's internal (contrastive) masking — DINO supplies
-        # its own crop augmentations, so the encoder pass should be deterministic.
-        return self.backbone(self._to_series(z), mask='all_true')   # [B, T, d_model]
-
-    def _pool(self, reps):
-        return reps.mean(dim=1)                            # [B, d_model]
-
-    def forward(self, z, padding_mask=None):
-        """z: [B, T, C]. Returns per head_type."""
-        if self.head_type == "prediction":
-            z    = self._to_series(z)
-            zn   = self.normalization(z, mode='norm')
-            reps = self._encode(zn)
-            pooled = reps[:, -1, :]                        # last-step rep
-            out  = self.head(pooled)                       # [B, pred_len * C]
-            out  = out.reshape(out.shape[0], self.pred_len, self.n_vars)
-            out  = self.normalization(out, mode='denorm')
-            return out
-        reps = self._encode(z)                             # [B, T, d_model]
-        if self.head_type == "classification":
-            return self.head(self._pool(reps))             # [B, n_classes]
-        # "Dino" (and any default): time-pooled embedding for the DINO head
-        return self._pool(reps)                            # [B, d_model]
-
-    def forward_recon(self, z):
-        """Full pass token reps. z: [B, T, C] → [B, T, 1, d_model]."""
-        reps = self._encode(z)
-        return reps.unsqueeze(2)
-
-    def forward_ibot(self, z, mask=None):
-        """iBOT/MAE encoding with a learnable mask token at masked timesteps.
+    def _encode_tokens(self, z, mask=None):
+        """Run the TS2Vec encoder, returning per-timestep token reps.
 
         z:    [B, T, C]
-        mask: [B, T] bool — True=masked (student). None=full pass (teacher).
-        returns: [B, T, 1, d_model]
+        mask: [B, T] bool — True = masked timestep (replaced by mask_token before the
+              conv stack). None = no masking.
+        returns reps [B, T, d_model].
+
+        Mirrors the manual encode path TS2Vec uses (input_fc → conv feature_extractor),
+        bypassing TSEncoder.forward so its internal contrastive masking stays disabled —
+        DINO supplies its own crop augmentations.
         """
         enc = self.backbone
         z = self._to_series(z)
@@ -142,4 +131,47 @@ class TS2VecForDINO(nn.Module):
         x = x.transpose(1, 2)                              # [B, hidden, T]
         x = enc.repr_dropout(enc.feature_extractor(x))     # [B, d_model, T]
         x = x.transpose(1, 2)                              # [B, T, d_model]
-        return x.unsqueeze(2)                              # [B, T, 1, d_model]
+        return x
+
+    def _global_pool(self, reps):
+        """Cross-attention pooling: a learned CLS query attends over all T token reps.
+
+        reps: [B, T, d_model] → global embedding [B, d_model]. The query connects to every
+        token directly, so the global token is full-window regardless of conv depth.
+        """
+        q = self.cls_query.expand(reps.shape[0], -1, -1)   # [B, 1, d_model]
+        global_rep, _ = self.global_attn(q, reps, reps)    # [B, 1, d_model]
+        return global_rep[:, 0, :]                         # [B, d_model]
+
+    def forward(self, z, padding_mask=None):
+        """z: [B, T, C]. Returns per head_type."""
+        if self.head_type == "prediction":
+            z    = self._to_series(z)
+            zn   = self.normalization(z, mode='norm')
+            reps = self._encode_tokens(zn)                 # [B, T, d_model]
+            pooled = reps[:, -1, :]                        # last-step rep
+            out  = self.head(pooled)                       # [B, pred_len * C]
+            out  = out.reshape(out.shape[0], self.pred_len, self.n_vars)
+            out  = self.normalization(out, mode='denorm')
+            return out
+        reps = self._encode_tokens(z)                      # [B, T, d_model]
+        glob = self._global_pool(reps)                     # [B, d_model]
+        if self.head_type == "classification":
+            return self.head(glob)                         # [B, n_classes]
+        # "Dino" (and any default): cross-attention global embedding for the DINO head
+        return glob                                        # [B, d_model]
+
+    def forward_recon(self, z):
+        """Per-timestep token reps. z: [B, T, C] → [B, T, 1, d_model]."""
+        reps = self._encode_tokens(z)                      # [B, T, d_model]
+        return reps.unsqueeze(2)                           # [B, T, 1, d_model]
+
+    def forward_ibot(self, z, mask=None):
+        """iBOT/MAE encoding with a learnable mask token at masked timesteps.
+
+        z:    [B, T, C]
+        mask: [B, T] bool — True=masked (student). None=full pass (teacher).
+        returns: [B, T, 1, d_model]
+        """
+        reps = self._encode_tokens(z, mask=mask)           # [B, T, d_model]
+        return reps.unsqueeze(2)                           # [B, T, 1, d_model]
