@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """What dwt_low_pass / dwt_soft_threshold do to REAL synthetic vs ETTh1 data,
-using the ACTUAL DWTAugmentation class + TSDiNO/config.py parameters.
+using the ACTUAL DWTAugmentation class + tsdino_timemixer/config.py parameters.
 
 Self-contained: subsamples synthetic .arrow series + reads the ETTh1 CSV
 directly, then runs each through the real augmentation for the db wavelets we
@@ -12,12 +12,12 @@ import torch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "TSDiNO"))
+sys.path.insert(0, os.path.join(ROOT, "tsdino_timemixer"))
 from data_paths import DATA_PATHS
 from data_agumentation import DWTAugmentation            # the real aug class
 
 # ── load the real TSDiNO config ─────────────────────────────────────────────
-_spec = ilu.spec_from_file_location("_dino_cfg", os.path.join(ROOT, "TSDiNO", "config.py"))
+_spec = ilu.spec_from_file_location("_dino_cfg", os.path.join(ROOT, "tsdino_timemixer", "config.py"))
 _mod  = ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
 cfg   = _mod.config
 

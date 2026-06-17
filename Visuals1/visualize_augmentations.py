@@ -31,7 +31,7 @@ from types import SimpleNamespace
 
 # ── path setup ────────────────────────────────────────────────────────────────
 _root      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_tsdino    = os.path.join(_root, "TSDiNO")
+_tsdino    = os.path.join(_root, "tsdino_timemixer")
 _tm_root   = os.path.join(_root, "TimeMixer-main")
 _tm_models = os.path.join(_tm_root, "models")
 for p in [_tm_models, _tm_root, _root, _tsdino]:  # _tsdino last → position 0, wins over TimeMixer's models/

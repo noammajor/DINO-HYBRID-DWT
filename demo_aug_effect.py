@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Show what dwt_low_pass vs dwt_soft_threshold do to the data.
 
-Mirrors TSDiNO/data_agumentation.py: pywt.wavedec(level=3), then
+Mirrors tsdino_timemixer/data_agumentation.py: pywt.wavedec(level=3), then
  - low_pass:       zero ALL detail coeffs, keep approximation
  - soft_threshold: sign(c)*max(|c|-sigma*max|c|,0) on each detail level
 """

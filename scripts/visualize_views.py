@@ -96,7 +96,7 @@ def embedding_similarities(ckpt_path: str, original: np.ndarray,
     """
     try:
         import torch.nn as nn
-        sys.path.insert(0, str(ROOT / "TSDiNO"))
+        sys.path.insert(0, str(ROOT / "tsdino_timemixer"))
         from TSDiNO.config import config as cfg
 
         ckpt = torch.load(ckpt_path, map_location="cpu")

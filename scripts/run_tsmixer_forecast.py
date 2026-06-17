@@ -44,7 +44,7 @@ def main():
             sys.stdout = sys.stderr = fh
             try:
                 run(
-                    model            = "dino",
+                    model            = "dino_timemixer",
                     task             = "forecast",
                     forecast_dataset = dataset,
                     backbone_type    = "tsmixer",

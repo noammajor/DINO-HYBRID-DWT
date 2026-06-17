@@ -9,7 +9,7 @@ class label. One figure per model, one subplot per dataset.
 
 Usage:
     python tsne_embeddings.py --datasets EthanolConcentration Heartbeat
-    python tsne_embeddings.py --datasets JapaneseVowels --models lejepa ntp
+    python tsne_embeddings.py --datasets JapaneseVowels --models dino patchtst
     python tsne_embeddings.py --datasets Handwriting --seed 2003 --encoder_layers 8
     python tsne_embeddings.py --datasets FaceDetection PEMS-SF --output_dir plots/
 """
@@ -34,7 +34,7 @@ PATCH_SIZE  = 16
 NUM_PATCHES = 72       # same as CLS_NUM_PATCHES in run_seed_analysis.py
 CW          = NUM_PATCHES * PATCH_SIZE  # 1152
 
-ALL_MODELS = ["dino", "jepa", "lejepa", "patchtst", "ntp", "timedart"]
+ALL_MODELS = ["dino", "patchtst"]
 
 DEFAULT_CLS_DIR = "/home/shared/datasets/Classification_TS"
 
@@ -120,31 +120,6 @@ def _ckpt_path(model: str, encoder_layers: int, seed: int, pretrain_source: str)
                 f"checkpoints{_src_tag}_layers{encoder_layers}{_seed_tag}_cw{CW}" /
                 "checkpoint_best.pth")
 
-    if model == "jepa":
-        return (ROOT / "output_model" / "classification" /
-                f"JEPA{_src_tag}_layers{encoder_layers}{_seed_tag}_cw{CW}" /
-                "best_model.pt")
-
-    if model == "lejepa":
-        return (ROOT / "output_model" / "classification" /
-                f"LE-JEPA{_src_tag}_layers{encoder_layers}{_seed_tag}_cw{CW}" /
-                "best_model.pt")
-
-    if model == "ntp":
-        ntp_dir = ROOT / "NTP"
-        _add_path(ntp_dir)
-        cfg = _load_config(ntp_dir / "config_ntp.py")
-        cfg['n_layers']            = encoder_layers
-        cfg['pretrained_model_id'] = encoder_layers
-        cfg['context_patches']     = NUM_PATCHES
-        cfg['ratio_patches']       = NUM_PATCHES + cfg.get('horizon_t', 6)
-        spec2 = importlib.util.spec_from_file_location("ntp_pretrain", ntp_dir / "ntp_pretrain.py")
-        mod2  = importlib.util.module_from_spec(spec2)
-        spec2.loader.exec_module(mod2)
-        fname = mod2._model_fname(cfg)
-        return (ntp_dir / "saved_models" / "classification" / src / "ntp" /
-                f"layers{encoder_layers}_cw{CW}{_seed_tag}" / f"{fname}.pt")
-
     if model == "patchtst":
         patchtst_dir = ROOT / "PatchTST_self_supervised"
         _add_path(patchtst_dir)
@@ -164,11 +139,6 @@ def _ckpt_path(model: str, encoder_layers: int, seed: int, pretrain_source: str)
         return (patchtst_dir / "saved_models" / "classification" / src /
                 "masked_patchtst" / mtype / f"layers{encoder_layers}_cw{CW}" / fname)
 
-    if model == "timedart":
-        cfg = _load_config(ROOT / "TimeDART-main" / "config_timedart.py")
-        return (ROOT / f"outputs/timedart_pretrain{_src_tag}_layers{cfg['e_layers']}" /
-                f"monash{_src_tag}" / "ckpt_best.pth")
-
     raise ValueError(f"Unknown model: {model}")
 
 
@@ -177,14 +147,16 @@ def _ckpt_path(model: str, encoder_layers: int, seed: int, pretrain_source: str)
 @torch.no_grad()
 def _extract_dino(ckpt: Path, loader, device) -> tuple:
     """DINO encoder. Returns (embeddings [N, d], labels [N])."""
-    _add_path(ROOT / "TSDiNO", ROOT / "TSDiNO" / "models")
+    _add_path(ROOT / "tsdino_timemixer", ROOT / "shared" / "patchtst")
 
     sample_patches, _, _ = next(iter(loader))
     n_v = sample_patches.shape[-1]
     n_p = sample_patches.shape[1]
 
-    from models.patchTST import PatchTST as DinoPatchTST
-    cfg   = _load_config(ROOT / "TSDiNO" / "config.py")
+    # PatchTST was removed from TSDiNO (now TimeMixer-only); the encoder for
+    # loading legacy DINO-PatchTST checkpoints now lives in shared/patchtst.
+    from patchTST import PatchTST as DinoPatchTST
+    cfg   = _load_config(ROOT / "tsdino_timemixer" / "config.py")
     model = DinoPatchTST(
         c_in=n_v,
         target_dim=cfg.get("out_dim", 256),
@@ -232,193 +204,6 @@ def _extract_dino(ckpt: Path, loader, device) -> tuple:
         z = model.backbone(x, padding_mask=pm)   # [B, C, d_model, P]
         B_, C_, D_, P_ = z.shape
         z = z.reshape(B_, C_ * D_ * P_)          # [B, C*d_model*P]
-        all_embs.append(z.cpu().numpy())
-        all_labels.append(labels.numpy())
-
-    return np.concatenate(all_embs), np.concatenate(all_labels)
-
-
-@torch.no_grad()
-def _extract_jepa(ckpt: Path, loader, encoder_layers: int, device,
-                  model_name: str = "jepa") -> tuple:
-    """JEPA / jepa encoder. Returns (embeddings [N, d], labels [N])."""
-    jepa_dir  = ROOT / "JEPA"
-    shared_dir = ROOT / "shared"
-    _add_path(str(jepa_dir / "JEPA"), str(jepa_dir), str(shared_dir))
-
-    # Load by absolute path to avoid module-cache conflicts with LE-JEPA's Encoder.py
-    _enc_spec = importlib.util.spec_from_file_location(
-        "jepa_encoder", jepa_dir / "JEPA" / "Encoder.py")
-    _enc_mod  = importlib.util.module_from_spec(_enc_spec)
-    _enc_spec.loader.exec_module(_enc_mod)
-    JepaEncoder = _enc_mod.Encoder
-
-    cfg = _load_config(jepa_dir / "config_files" / "config_jepa.py")
-    cfg['num_encoder_layers'] = encoder_layers
-    embed_dim = cfg["encoder_embed_dim"]
-
-    encoder = JepaEncoder(
-        num_patches   = NUM_PATCHES,
-        dim_in        = PATCH_SIZE,
-        embed_dim     = embed_dim,
-        nhead         = cfg["nhead"],
-        num_layers    = encoder_layers,
-        mlp_ratio     = cfg["mlp_ratio"],
-        drop_rate     = cfg["drop_rate"],
-        attn_drop_rate = cfg["attn_drop_rate"],
-        pe            = 'sincos',
-        learn_pe      = False,
-        res_attention = True,
-    ).to(device)
-
-    if ckpt.exists():
-        raw    = torch.load(ckpt, map_location="cpu")
-        enc_sd = raw["target_encoder"]
-        encoder.load_state_dict(enc_sd, strict=False)
-        print(f"  [{model_name}] loaded encoder from {ckpt.name}")
-    else:
-        print(f"  [{model_name}] WARNING: checkpoint not found at {ckpt}")
-
-    encoder.eval()
-
-    def _instance_norm(x, eps=1e-6):
-        mean = x.mean(dim=(1, 2), keepdim=True)
-        std  = x.std(dim=(1, 2),  keepdim=True) + eps
-        return (x - mean) / std, mean, std
-
-    all_embs, all_labels = [], []
-    for patches, labels, padding_mask in loader:
-        patches      = patches.float().to(device)
-        padding_mask = padding_mask.to(device)
-        B, P, PL, C  = patches.shape
-        ctx_norm, _, _ = _instance_norm(patches)
-        out = encoder(ctx_norm, padding_mask=padding_mask)
-        enc = out["data_patches"]            # [B*C, P, embed_dim]
-        enc = enc.reshape(B, C * P * embed_dim)  # [B, C*P*embed_dim]
-        all_embs.append(enc.cpu().numpy())
-        all_labels.append(labels.numpy())
-
-    return np.concatenate(all_embs), np.concatenate(all_labels)
-
-
-@torch.no_grad()
-def _extract_lejepa(ckpt: Path, loader, encoder_layers: int, device) -> tuple:
-    """LE-JEPA encoder. Returns (embeddings [N, d], labels [N])."""
-    lejepa_dir = ROOT / "LE-JEPA"
-    shared_dir  = ROOT / "shared"
-    _add_path(str(lejepa_dir), str(shared_dir))
-
-    # Load by absolute path to avoid module-cache conflicts with JEPA's Encoder.py
-    _enc_spec = importlib.util.spec_from_file_location(
-        "lejepa_encoder", lejepa_dir / "Encoder.py")
-    _enc_mod  = importlib.util.module_from_spec(_enc_spec)
-    _enc_spec.loader.exec_module(_enc_mod)
-    LeJepaEncoder = _enc_mod.Encoder
-
-    cfg = _load_config(lejepa_dir / "config_lejepa.py")
-    cfg['num_encoder_layers'] = encoder_layers
-    embed_dim = cfg["encoder_embed_dim"]
-
-    encoder = LeJepaEncoder(
-        num_patches   = NUM_PATCHES,
-        dim_in        = PATCH_SIZE,
-        embed_dim     = embed_dim,
-        nhead         = cfg["nhead"],
-        num_layers    = encoder_layers,
-        mlp_ratio     = cfg["mlp_ratio"],
-        drop_rate     = cfg["drop_rate"],
-        attn_drop_rate = cfg["attn_drop_rate"],
-        pe            = 'sincos',
-        learn_pe      = False,
-        res_attention = True,
-    ).to(device)
-
-    if ckpt.exists():
-        raw   = torch.load(ckpt, map_location="cpu")
-        enc_sd = raw["encoder"]
-        encoder.load_state_dict(enc_sd, strict=False)
-        print(f"  [lejepa] loaded encoder from {ckpt.name}")
-    else:
-        print(f"  [lejepa] WARNING: checkpoint not found at {ckpt}")
-
-    encoder.eval()
-
-    def _instance_norm(x, eps=1e-6):
-        mean = x.mean(dim=(1, 2), keepdim=True)
-        std  = x.std(dim=(1, 2),  keepdim=True) + eps
-        return (x - mean) / std, mean, std
-
-    all_embs, all_labels = [], []
-    for patches, labels, padding_mask in loader:
-        patches      = patches.float().to(device)
-        padding_mask = padding_mask.to(device)
-        B, P, PL, C  = patches.shape
-        ctx_norm, _, _ = _instance_norm(patches)
-        out = encoder(ctx_norm, padding_mask=padding_mask)
-        enc = out["data_patches"]            # [B*C, P, embed_dim]
-        enc = enc.reshape(B, C * P * embed_dim)  # [B, C*P*embed_dim]
-        all_embs.append(enc.cpu().numpy())
-        all_labels.append(labels.numpy())
-
-    return np.concatenate(all_embs), np.concatenate(all_labels)
-
-
-@torch.no_grad()
-def _extract_ntp(ckpt: Path, loader, encoder_layers: int, device) -> tuple:
-    """NTP (PatchTST causal) encoder. Returns (embeddings [N, d], labels [N])."""
-    ntp_dir   = ROOT / "NTP"
-    shared_dir = ROOT / "shared"
-    _add_path(str(ntp_dir), str(shared_dir))
-
-    from models.patchTST import PatchTST
-
-    cfg     = _load_config(ntp_dir / "config_ntp.py")
-    d_model = cfg["d_model"]
-
-    sample_patches, _, _ = next(iter(loader))
-    num_patch = sample_patches.shape[1]
-    n_v       = sample_patches.shape[-1]
-
-    backbone = PatchTST(
-        c_in=n_v,
-        target_dim=cfg["patch_size"],
-        patch_len=cfg["patch_size"],
-        stride=cfg["patch_size"],
-        num_patch=num_patch,
-        n_layers=encoder_layers,
-        n_heads=cfg["n_heads"],
-        d_model=d_model,
-        shared_embedding=True,
-        d_ff=cfg["d_ff"],
-        dropout=cfg["dropout"],
-        head_dropout=cfg["head_dropout"],
-        act=cfg["act"],
-        head_type="pretrain",
-        causal=True,
-        res_attention=False,
-    ).to(device)
-
-    if ckpt.exists():
-        raw      = torch.load(ckpt, map_location="cpu")
-        state    = raw.get("encoder", raw.get("model", raw))
-        enc_dict = backbone.backbone.state_dict()
-        filtered = {k: v for k, v in state.items()
-                    if k in enc_dict and enc_dict[k].shape == v.shape}
-        enc_dict.update(filtered)
-        backbone.backbone.load_state_dict(enc_dict)
-        print(f"  [ntp] loaded {len(filtered)}/{len(enc_dict)} params from {ckpt.name}")
-    else:
-        print(f"  [ntp] WARNING: checkpoint not found at {ckpt}")
-
-    backbone.eval()
-
-    all_embs, all_labels = [], []
-    for patches, labels, padding_mask in loader:
-        x            = patches.permute(0, 1, 3, 2).float().to(device)  # [B,P,C,PL]
-        padding_mask = padding_mask.to(device)
-        z = backbone.backbone(x, padding_mask=padding_mask)  # [B, C, d_model, P]
-        B_, C_, D_, P_ = z.shape
-        z = z.reshape(B_, C_ * D_ * P_)                      # [B, C*d_model*P]
         all_embs.append(z.cpu().numpy())
         all_labels.append(labels.numpy())
 
@@ -486,114 +271,11 @@ def _extract_patchtst(ckpt: Path, loader, encoder_layers: int, device) -> tuple:
     return np.concatenate(all_embs), np.concatenate(all_labels)
 
 
-@torch.no_grad()
-def _extract_timedart(ckpt: Path, loader, encoder_layers: int, device) -> tuple:
-    """TimeDaRT encoder. Returns (embeddings [N, d], labels [N])."""
-    td_dir    = ROOT / "TimeDART-main"
-    shared_dir = ROOT / "shared"
-
-    # Snapshot sys.modules and sys.path, then inject TimeDART-main first so its
-    # 'models', 'layers', and 'utils' packages take priority over other models'.
-    import sys as _sys
-    _snap_path = list(_sys.path)
-
-    # Remove conflicting cached packages so TimeDART's versions win
-    for _k in list(_sys.modules.keys()):
-        if (_k in ("models", "layers", "utils") or
-                _k.startswith(("models.", "layers.", "utils."))):
-            del _sys.modules[_k]
-    # Put TimeDART-main at front of path so its packages are found first
-    _sys.path.insert(0, str(td_dir))
-
-    from models.TimeDART import Model
-    from utils.tools import transfer_weights
-
-    # Restore path (keep TimeDART modules cached — they're needed for the call below)
-    _sys.path[:] = _snap_path
-    _add_path(str(td_dir), str(shared_dir))
-
-    cfg = _load_config(td_dir / "config_timedart.py")
-    from types import SimpleNamespace
-
-    sample_patches, _, _ = next(iter(loader))
-    n_v = sample_patches.shape[-1]
-
-    patch_len = cfg.get("patch_len", PATCH_SIZE)
-    stride    = cfg.get("stride", patch_len)
-
-    args = SimpleNamespace(
-        input_len    = 512,
-        d_model      = cfg.get("d_model", 256),
-        n_heads      = cfg.get("n_heads", 8),
-        d_ff         = cfg.get("d_ff", 512),
-        dropout      = cfg.get("dropout", 0.1),
-        head_dropout = cfg.get("head_dropout", 0.1),
-        device       = device,
-        task_name    = "pretrain",
-        pred_len     = 0,
-        use_norm     = False,
-        patch_len    = patch_len,
-        stride       = stride,
-        time_steps   = cfg.get("time_steps", 1000),
-        scheduler    = cfg.get("scheduler", "cosine"),
-        mask_ratio   = cfg.get("mask_ratio", 1.0),
-        e_layers     = encoder_layers,
-        d_layers     = cfg.get("d_layers", 1),
-        enc_in       = n_v,
-        dec_in       = n_v,
-        c_out        = n_v,
-    )
-
-    model = Model(args).float().to(device)
-
-    if ckpt.exists():
-        model = transfer_weights(str(ckpt), model, exclude_head=True, device=str(device))
-        print(f"  [timedart] loaded checkpoint from {ckpt.name}")
-    else:
-        print(f"  [timedart] WARNING: checkpoint not found at {ckpt}")
-
-    model.eval()
-    d_model = cfg.get("d_model", 256)
-
-    def _encode(x, padding_mask=None):
-        """x: [B,T,C] -> [B, C, d_model, P]"""
-        B, T, C = x.shape
-        xc  = model.channel_independence(x)          # [B*C, T, 1]
-        xc  = model.patch(xc)                        # [B*C, P, patch_len]
-        P   = xc.shape[1]
-        xc  = model.enc_embedding(xc)                # [B*C, P, d_model]
-        xc  = model.positional_encoding(xc)          # [B*C, P, d_model]
-        kpm = None
-        if padding_mask is not None:
-            pm  = padding_mask.bool()
-            kpm = (~pm).unsqueeze(1).expand(-1, C, -1).reshape(B * C, P)
-        xc  = model.encoder(xc, is_mask=False, key_padding_mask=kpm)  # [B*C, P, d_model]
-        xc  = xc.reshape(B, C, P, d_model)
-        return xc.permute(0, 1, 3, 2)               # [B, C, d_model, P]
-
-    all_embs, all_labels = [], []
-    for patches, labels, padding_mask in loader:
-        B, P, PL, C = patches.shape
-        x            = patches.reshape(B, P * PL, C).float().to(device)
-        padding_mask = padding_mask.to(device)
-        z = _encode(x, padding_mask)          # [B, C, d_model, P]
-        B_, C_, D_, P_ = z.shape
-        z = z.reshape(B_, C_ * D_ * P_)       # [B, C*d_model*P]
-        all_embs.append(z.cpu().numpy())
-        all_labels.append(labels.numpy())
-
-    return np.concatenate(all_embs), np.concatenate(all_labels)
-
-
 # ── dispatch table ─────────────────────────────────────────────────────────────
 
 _EXTRACTORS = {
     "dino":        _extract_dino,
-    "jepa": _extract_jepa,
-    "lejepa":      _extract_lejepa,
-    "ntp":         _extract_ntp,
     "patchtst":    _extract_patchtst,
-    "timedart":    _extract_timedart,
 }
 
 
@@ -640,12 +322,8 @@ def _reduce(embeddings: np.ndarray, method: str = "tsne",
 
 
 MODEL_DISPLAY = {
-    "jepa": "JEPA",
-    "lejepa":      "LE-JEPA",
     "dino":        "DINO",
     "patchtst":    "MAE",
-    "ntp":         "NTP",
-    "timedart":    "Diffusion",
 }
 
 # Human-readable class labels keyed by the dataset's RAW label string
@@ -914,11 +592,6 @@ def main():
                 # call extractor with correct signature
                 if model_name in ("dino",):
                     embs, labels = extractor(ckpt, loader, device)
-                elif model_name == "timedart":
-                    embs, labels = extractor(ckpt, loader, args.encoder_layers, device)
-                elif model_name == "jepa":
-                    embs, labels = extractor(ckpt, loader, args.encoder_layers, device,
-                                             model_name="jepa")
                 else:
                     embs, labels = extractor(ckpt, loader, args.encoder_layers, device)
 

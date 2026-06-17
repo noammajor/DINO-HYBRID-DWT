@@ -8,10 +8,10 @@ Saves the best checkpoint to:
 Then runs in-domain forecasting (pred_lens 96/192/336/720) on the same dataset.
 
 Usage:
-    python scripts/run_single.py --model dino --dataset etth1 --name my_run
+    python scripts/run_single.py --model dino_timemixer --dataset etth1 --name my_run
     python scripts/run_single.py --model patchtst --dataset weather \\
         --name ptst_w8 --layers 8 --embed_dim 256 --lr 1e-4 --gpu 0
-    python scripts/run_single.py --model ntp --dataset ettm2 --name ntp_test \\
+    python scripts/run_single.py --model patchtst --dataset ettm2 --name ptst_test \\
         --skip_pretrain   # skip training, jump straight to forecasting
 """
 
@@ -27,24 +27,21 @@ ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
 IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
-ALL_MODELS         = ["dino", "jepa", "lejepa", "patchtst", "ntp", "hybrid", "timedart",
+ALL_MODELS         = ["dino_timemixer", "dino_patchtst", "patchtst",
                       "timemixer", "autoformer", "fedformer", "dlinear"]
 
 # Supervised models train directly on forecasting — no pretrain phase, no checkpoint copy.
 SUPERVISED_MODELS  = {"timemixer", "autoformer", "fedformer", "dlinear"}
 
 MODEL_DEFAULT_LR = {
-    "dino":        5e-4,
-    "jepa":        5e-4,
-    "lejepa":      5e-4,
-    "patchtst":    5e-5,
-    "ntp":         5e-5,
-    "hybrid":      5e-4,
-    "timedart":    1e-4,
-    "timemixer":   1e-4,
-    "autoformer":  1e-4,
-    "fedformer":   1e-4,
-    "dlinear":     5e-3,
+    "dino_timemixer": 5e-4,
+    "dino_patchtst":  5e-4,
+    "dino_ts2vec":   5e-4,
+    "patchtst":       5e-5,
+    "timemixer":      1e-4,
+    "autoformer":     1e-4,
+    "fedformer":      1e-4,
+    "dlinear":        5e-3,
 }
 
 _python = sys.executable
@@ -54,34 +51,17 @@ _python = sys.executable
 
 def _find_src_checkpoint(model: str, dataset: str, layers: int, out_dim: int = None, ckpt_tag: str = None) -> Path:
     """Return the path where Train_and_downstream.py saves the best checkpoint."""
-    if model == "dino":
+    if model in ("dino_timemixer", "dino_patchtst", "dino_ts2vec"):
+        _base       = {"dino_timemixer": "checkpoints", "dino_patchtst": "checkpoints_patchtst", "dino_ts2vec": "checkpoints_ts2vec"}[model]
         _outdim_tag = f"_outdim{out_dim}" if out_dim is not None else ''
         _ckpt_tag   = f"_{ckpt_tag}" if ckpt_tag else ''
-        return ROOT / f"checkpoints_{dataset}_layers{layers}{_outdim_tag}{_ckpt_tag}" / "checkpoint_best.pth"
-
-    elif model == "jepa":
-        return ROOT / "output_model" / f"JEPA_{dataset}_layers{layers}" / "best_model.pt"
-
-    elif model == "lejepa":
-        return ROOT / "output_model" / f"LE-JEPA_layers{layers}" / "best_model.pt"
+        return ROOT / f"{_base}_{dataset}_layers{layers}{_outdim_tag}{_ckpt_tag}" / "checkpoint_best.pth"
 
     elif model == "patchtst":
         save_dir = (ROOT / "PatchTST_self_supervised" / "saved_models" /
                     dataset / "masked_patchtst" / "based_model" / f"layers{layers}")
         candidates = [p for p in save_dir.glob("*.pth") if "_epoch" not in p.name]
         return candidates[0] if candidates else save_dir / "checkpoint_best.pth"
-
-    elif model == "ntp":
-        save_dir = ROOT / "NTP" / "saved_models" / dataset / "ntp" / f"layers{layers}"
-        candidates = [p for p in save_dir.glob("*.pt") if "_epoch" not in p.name and "_losses" not in p.name]
-        return candidates[0] if candidates else save_dir / "checkpoint_best.pt"
-
-    elif model == "hybrid":
-        # in-domain run: path includes dataset tag
-        return ROOT / "output_model" / f"Hybrid_{dataset}_layers{layers}" / "best_model.pt"
-
-    elif model == "timedart":
-        return ROOT / "outputs" / f"timedart_pretrain_{dataset}_layers{layers}" / f"monash_{dataset}" / "ckpt_best.pth"
 
     else:
         raise ValueError(f"Unknown model: {model}")
@@ -122,10 +102,6 @@ def main():
                         help="Number of encoder layers (default: 8)")
     parser.add_argument("--embed_dim", type=int, default=None,
                         help="Embedding dim / d_model override")
-    parser.add_argument("--predictor_embed_dim", type=int, default=None,
-                        help="Predictor embedding dim (JEPA only)")
-    parser.add_argument("--predictor_layers", type=int, default=None,
-                        help="Number of predictor layers (JEPA/LE-JEPA)")
     parser.add_argument("--out_dim", type=int, default=None,
                         help="DINO output bins / prototype count (DINO only)")
     parser.add_argument("--epochs", type=int, default=None,
@@ -150,14 +126,10 @@ def main():
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--backbone_type", type=str, default=None,
                         help="patchtst | tsmixer — overrides config (default: patchtst)")
-    parser.add_argument("--lr_pred",  type=float, default=None,
-                        help="Predictor LR (JEPA only)")
     parser.add_argument("--gpu",      type=int, default=0,
                         help="GPU index via CUDA_VISIBLE_DEVICES (default: 0)")
     parser.add_argument("--seed",     type=int, default=None,
                         help="Random seed")
-    parser.add_argument("--phi",        type=float, default=None,
-                        help="LEJEPA/NTP mixing weight φ∈[0,1] (hybrid model only)")
     parser.add_argument("--skip_pretrain", action="store_true",
                         help="Skip pretraining, go straight to forecasting")
     parser.add_argument("--dry_run",       action="store_true",
@@ -173,9 +145,7 @@ def main():
     print(f"  model:     {args.model}")
     print(f"  dataset:   {args.dataset}")
     print(f"  layers:    {args.layers}" +
-          (f"   embed_dim: {args.embed_dim}" if args.embed_dim else "") +
-          (f"   pred_layers: {args.predictor_layers}" if args.predictor_layers else "") +
-          (f"   pred_embed_dim: {args.predictor_embed_dim}" if args.predictor_embed_dim else ""))
+          (f"   embed_dim: {args.embed_dim}" if args.embed_dim else ""))
     print(f"  lr:        {lr}")
     print(f"  gpu:       {args.gpu}")
     print(f"  ckpt  →    {target_ckpt}")
@@ -195,14 +165,8 @@ def main():
     ]
     if args.model not in SUPERVISED_MODELS or args.layers != 8:
         base_cmd += ["--encoder_layers", str(args.layers)]
-    if args.lr_pred:
-        base_cmd += ["--lr_pred", str(args.lr_pred)]
     if args.embed_dim:
         base_cmd += ["--embed_dim", str(args.embed_dim)]
-    if args.predictor_embed_dim:
-        base_cmd += ["--predictor_embed_dim", str(args.predictor_embed_dim)]
-    if args.predictor_layers:
-        base_cmd += ["--predictor_layers", str(args.predictor_layers)]
     if args.out_dim:
         base_cmd += ["--out_dim", str(args.out_dim)]
     if args.epochs:
@@ -223,8 +187,6 @@ def main():
         base_cmd += ["--mlm_phi", str(args.mlm_phi)]
     if args.mlm_mode is not None:
         base_cmd += ["--mlm_mode", args.mlm_mode]
-    if args.phi is not None:
-        base_cmd += ["--phi", str(args.phi)]
     if args.backbone_type is not None:
         base_cmd += ["--backbone_type", args.backbone_type]
 

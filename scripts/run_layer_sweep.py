@@ -6,22 +6,13 @@ For each encoder layer config [2, 4, 8, 12, 24], all models are launched in
 parallel (one per GPU). The script waits for all to finish before moving
 to the next layer config.
 
-Predictor layers (JEPA models) are always half the encoder layers:
-    encoder  2  →  predictor  1
-    encoder  4  →  predictor  2
-    encoder  8  →  predictor  4
-    encoder 12  →  predictor  6
-    encoder 24  →  predictor 12
-
 Checkpoints are saved under layer-suffixed paths, e.g.:
-    output_model/JEPA_layers8/
-    output_model/LE-JEPA_layers8/
     checkpoints_layers8/
 
 Usage:
     python run_layer_sweep.py                          # all models, all layer configs
     python run_layer_sweep.py --layers 8 12            # specific layer counts
-    python run_layer_sweep.py --models dino lejepa     # specific models
+    python run_layer_sweep.py --models dino_timemixer patchtst   # specific models
     python run_layer_sweep.py --layers 8 --dry_run     # print commands only
 """
 
@@ -37,8 +28,6 @@ ROOT = Path(__file__).parent.parent.resolve()
 LAYER_CONFIGS = [2, 4, 8, 12, 24]
 
 # Per-layer learning rate: larger models need lower LR to stay stable.
-# jepa/lejepa use SGD+OneCycleLR (max_lr), so these are conservative.
-# dino/ntp/patchtst use Adam, so they can afford slightly higher LR.
 LAYER_LR = {
     2:  3e-3,
     4:  1e-3,
@@ -56,8 +45,8 @@ DINO_LAYER_LR = {
     24: 1e-4,
 }
 
-# NTP, PatchTST, and TimeDart use Adam — lower LR, scale down aggressively with depth.
-NTP_PATCHTST_TIMEDART_LAYER_LR = {
+# PatchTST and TimeMixer use Adam — lower LR, scale down aggressively with depth.
+ADAM_LAYER_LR = {
     2:  3e-4,
     4:  1e-4,
     8:  5e-5,
@@ -67,13 +56,10 @@ NTP_PATCHTST_TIMEDART_LAYER_LR = {
 
 # Model → GPU assignment (change to fit your server)
 MODEL_GPU = {
-    "dino":       0,
-    "jepa":       1,
-    "lejepa":     2,
+    "dino_timemixer": 0,
+    "dino_patchtst":  1,
+    "dino_ts2vec":    2,
     "patchtst":   3,
-    "ntp":        4,
-    "timedart":   5,
-    "softclt":    6,
     "timemixer":  7,
 }
 
@@ -89,11 +75,10 @@ def launch_model(model: str, encoder_layers: int, gpu: int,
                  log_tag: str = ""):
     pred_layers = predictor_layers_for(encoder_layers)
     # For unlisted depths, fall back to the 8-layer LR (mid-range default).
-    if model == "dino":
+    if model.startswith("dino"):
         lr = DINO_LAYER_LR.get(encoder_layers, DINO_LAYER_LR[8])
-    elif model in ("ntp", "patchtst", "timedart", "timemixer"):
-        lr = NTP_PATCHTST_TIMEDART_LAYER_LR.get(encoder_layers,
-                                                NTP_PATCHTST_TIMEDART_LAYER_LR[8])
+    elif model in ("patchtst", "timemixer"):
+        lr = ADAM_LAYER_LR.get(encoder_layers, ADAM_LAYER_LR[8])
     else:
         lr = LAYER_LR.get(encoder_layers, LAYER_LR[8])
     src_tag   = f"_{pretrain_source}" if pretrain_source and pretrain_source != "monash" else ""

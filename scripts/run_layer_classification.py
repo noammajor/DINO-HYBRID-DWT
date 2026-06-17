@@ -2,9 +2,8 @@
 """
 run_layer_classification.py — Classification evaluation across layer-sweep checkpoints.
 
-Runs all models (dino, jepa, lejepa, patchtst, ntp, timedart, jepa_random,
-patchtst_random) using their best checkpoint for each encoder layer config
-on all classification datasets.
+Runs all models (dino, patchtst, patchtst_random) using their best checkpoint
+for each encoder layer config on all classification datasets.
 
 Each model runs as a subprocess on its assigned GPU (matching run_layer_forecast.py).
 
@@ -15,7 +14,7 @@ Results saved to:
 Usage:
     python run_layer_classification.py
     python run_layer_classification.py --layers 2 4 8
-    python run_layer_classification.py --models dino jepa
+    python run_layer_classification.py --models dino_timemixer dino_patchtst patchtst
     python run_layer_classification.py --datasets EthanolConcentration SelfRegulationSCP2
     python run_layer_classification.py --gpu_override 5
     python run_layer_classification.py --linear_probe false       # fine-tune mode
@@ -57,15 +56,11 @@ CLASSIFICATION_DATASETS = [
 ]
 
 MODEL_GPU = {
-    "dino":               0,
-    "jepa":               1,
-    "lejepa":             2,
+    "dino_timemixer":     0,
+    "dino_patchtst":      1,
+    "dino_ts2vec":    2,
     "patchtst":           3,
-    "ntp":                4,
-    "jepa_random":        5,
     "patchtst_random":    5,
-    "timedart":           6,
-    "softclt":            7,
     "timemixer":          7,
 }
 ALL_MODELS = list(MODEL_GPU.keys())
@@ -159,11 +154,11 @@ def run_model_worker(model: str, encoder_layers: int, gpu: int,
                 )
 
                 # Return tuple shapes (when task="classify"):
-                #   dino / jepa / lejepa / patchtst / ntp : (..., ..., cls_acc, anom)
-                #   timedart / timemixer                  : (best_pred, mse, mae, cls_acc, anom)
+                #   dino / patchtst : (..., ..., cls_acc, anom)
+                #   timemixer       : (best_pred, mse, mae, cls_acc, anom)
                 #   any model in random-init / single-float fallback: cls_acc as float
                 if isinstance(result, tuple):
-                    cls_acc = result[3] if model in ("timedart", "timemixer") else result[2]
+                    cls_acc = result[3] if model == "timemixer" else result[2]
                 else:
                     cls_acc = result
 

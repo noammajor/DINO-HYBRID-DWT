@@ -14,7 +14,7 @@ Results saved to:
 
 Usage:
     python run_finetune_8layers.py
-    python run_finetune_8layers.py --models dino lejepa timedart
+    python run_finetune_8layers.py --models dino_timemixer dino_patchtst patchtst
     python run_finetune_8layers.py --pretrain_source monash+synthetic
     python run_finetune_8layers.py --gpu_override 0
     python run_finetune_8layers.py --tasks forecast anomaly
@@ -50,12 +50,10 @@ ANOMALY_DATASETS = ["SMD", "MSL", "SMAP", "SWaT", "PSM"]
 
 # Model → GPU assignment
 MODEL_GPU = {
-    "dino":            0,
-    "jepa":            1,
-    "lejepa":          2,
+    "dino_timemixer":  0,
+    "dino_patchtst":   1,
+    "dino_ts2vec":    2,
     "patchtst":        3,
-    "ntp":             4,
-    "timedart":        5,
     "patchtst_random": 6,
 }
 ALL_MODELS = list(MODEL_GPU.keys())
@@ -69,26 +67,14 @@ def _checkpoint_exists(model: str, encoder_layers: int, pretrain_source: str) ->
 
     if model == "patchtst_random":
         return True   # random baseline — no checkpoint required
-    if model == "dino":
-        d = ROOT / f"checkpoints{src_tag}_layers{encoder_layers}"
+    if model in ("dino_timemixer", "dino_patchtst", "dino_ts2vec"):
+        _base = {"dino_timemixer": "checkpoints", "dino_patchtst": "checkpoints_patchtst", "dino_ts2vec": "checkpoints_ts2vec"}[model]
+        d = ROOT / f"{_base}{src_tag}_layers{encoder_layers}"
         return d.exists() and any(d.glob("checkpoint*.pth"))
-    if model == "jepa":
-        d = ROOT / "output_model" / f"JEPA{src_tag}_layers{encoder_layers}"
-        return d.exists() and any(d.glob("*best_model.pt"))
-    if model == "lejepa":
-        d = ROOT / "output_model" / f"LE-JEPA{src_tag}_layers{encoder_layers}"
-        return d.exists() and any(d.glob("*best_model.pt"))
-    if model == "ntp":
-        d = ROOT / "NTP" / "saved_models" / pretrain_source / "ntp" / f"layers{encoder_layers}"
-        return d.exists() and any(d.glob("ntp_pretrained_*.pt"))
     if model == "patchtst":
         d = (ROOT / "PatchTST_self_supervised" / "saved_models" /
              pretrain_source / "masked_patchtst" / "based_model" / f"layers{encoder_layers}")
         return d.exists() and any(d.glob("patchtst_pretrained_*.pth"))
-    if model == "timedart":
-        f = (ROOT / f"outputs/timedart_pretrain{src_tag}_layers{encoder_layers}" /
-             f"monash{src_tag}" / "ckpt_best.pth")
-        return f.exists()
     return False
 
 
@@ -154,10 +140,7 @@ def _unpack_forecast(model: str, result) -> tuple:
     Extract (mse, mae) from a runner's return value.
 
     Runner return layouts (when task="forecast", cls/anom are None):
-      dino / jepa / patchtst : (ckpt,  mse,  cls_acc, anom)
-      lejepa                        : (mse,   mae,  cls_acc, anom)
-      ntp                           : (mse,   mae,  cls_acc, anom)
-      timedart                      : (pred,  mse,  mae, cls_acc, anom)
+      dino / patchtst : (ckpt,  mse,  cls_acc, anom)
     """
     if result is None:
         return None, None
@@ -166,16 +149,9 @@ def _unpack_forecast(model: str, result) -> tuple:
     if not isinstance(result, tuple) or len(result) == 0:
         return None, None
 
-    if model in ("lejepa", "ntp"):
-        mse = result[0]
-        mae = result[1] if len(result) > 1 else None
-    elif model == "timedart":
-        mse = result[1] if len(result) > 1 else None
-        mae = result[2] if len(result) > 2 else None
-    else:
-        # dino, jepa, patchtst: (ckpt, mse, cls_acc, anom)
-        mse = result[1] if len(result) > 1 else None
-        mae = None
+    # dino, patchtst: (ckpt, mse, cls_acc, anom)
+    mse = result[1] if len(result) > 1 else None
+    mae = None
 
     return (float(mse) if mse is not None else None,
             float(mae) if mae is not None else None)
@@ -186,10 +162,7 @@ def _unpack_classify(model: str, result):
     Extract accuracy from a runner's return value.
 
     Runner return layouts (when task="classify", mse/anom are None):
-      dino / jepa / patchtst : (ckpt,  None, cls_acc, None)
-      lejepa                        : (None,  None, cls_acc, None)
-      ntp                           : (None,  None, cls_acc, None)
-      timedart                      : (pred,  None, None, cls_acc, None)
+      dino / patchtst : (ckpt,  None, cls_acc, None)
     """
     if result is None:
         return None
@@ -198,11 +171,8 @@ def _unpack_classify(model: str, result):
     if not isinstance(result, tuple) or len(result) == 0:
         return None
 
-    if model == "timedart":
-        acc = result[3] if len(result) > 3 else None
-    else:
-        # dino, jepa, patchtst, lejepa, ntp: (*, *, cls_acc, anom)
-        acc = result[2] if len(result) > 2 else None
+    # dino, patchtst: (*, *, cls_acc, anom)
+    acc = result[2] if len(result) > 2 else None
 
     return float(acc) if acc is not None else None
 

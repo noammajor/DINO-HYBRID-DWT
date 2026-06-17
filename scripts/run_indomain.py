@@ -15,7 +15,7 @@ Logs:
 
 Usage:
     python run_indomain.py                                 # all models, all datasets
-    python run_indomain.py --models dino patchtst          # specific models
+    python run_indomain.py --models dino_timemixer patchtst   # specific models
     python run_indomain.py --datasets etth1 ettm2          # specific datasets
     python run_indomain.py --gpu_override 0                # all models on one GPU
     python run_indomain.py --skip_pretrain                 # use existing checkpoints
@@ -40,21 +40,17 @@ IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
 
 # Per-model LR overrides (same as run_seed_analysis.py)
 MODEL_LR = {
-    "dino":        5e-4,
-    "jepa": 5e-4,
-    "lejepa":      5e-4,
-    "patchtst":    5e-5,
-    "ntp":         5e-5,
-    "timedart":    5e-5,
+    "dino_timemixer": 5e-4,
+    "dino_patchtst":  5e-4,
+    "dino_ts2vec":   5e-4,
+    "patchtst":       5e-5,
 }
 
 MODEL_GPU = {
-    "dino":        0,
-    "jepa": 1,
-    "lejepa":      2,
-    "patchtst":    3,
-    "ntp":         4,
-    "timedart":    5,
+    "dino_timemixer": 0,
+    "dino_patchtst":  1,
+    "dino_ts2vec":    2,
+    "patchtst":       3,
 }
 
 ALL_MODELS = list(MODEL_GPU.keys())
