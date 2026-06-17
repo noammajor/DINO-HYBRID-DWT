@@ -11,13 +11,13 @@ internally (num_patches = ctx_len // patch_len, default patch_len=16).
 Examples:
     # DINO, 4 context lengths, single dataset
     python scripts/run_ctx_sweep.py \\
-        --model dino --dataset etth1 --name dino_ctx \\
+        --model dino_timemixer --dataset etth1 --name dino_ctx \\
         --ctx_lens 96 192 336 720 \\
         --layers 4 --epochs 75 --lr 0.001 --gpu 0
 
     # DINO + MODWT augmentation
     python scripts/run_ctx_sweep.py \\
-        --model dino --dataset etth1 --name dino_modwt_ctx \\
+        --model dino_timemixer --dataset etth1 --name dino_modwt_ctx \\
         --ctx_lens 96 192 336 720 \\
         --ckpt_tag modwt --aug_global modwt_soft --aug_local modwt_hard \\
         --layers 4 --epochs 75 --lr 0.001 --gpu 0
@@ -25,7 +25,7 @@ Examples:
     # All 4 ETT datasets, sequential
     for ds in etth1 etth2 ettm1 ettm2; do
         python scripts/run_ctx_sweep.py \\
-            --model dino --dataset $ds --name dino_ctx_${ds} \\
+            --model dino_timemixer --dataset $ds --name dino_ctx_${ds} \\
             --ctx_lens 96 192 336 720 --layers 4 --epochs 75 --gpu 0
     done
 """
@@ -46,13 +46,10 @@ PATCH_LEN  = 16   # timesteps per patch — must match TSDiNO config
 IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
 
 MODEL_DEFAULT_LR = {
-    "dino":       5e-4,
-    "jepa":       5e-4,
-    "lejepa":     5e-4,
+    "dino_timemixer": 5e-4,
+    "dino_patchtst":  5e-4,
+    "dino_ts2vec":   5e-4,
     "patchtst":   5e-5,
-    "ntp":        5e-5,
-    "hybrid":     5e-4,
-    "timedart":   1e-4,
     "timemixer":  1e-4,
     "autoformer": 1e-4,
     "fedformer":  1e-4,
@@ -82,7 +79,7 @@ def main():
         description="Sweep over context lengths for pretrain + forecasting"
     )
     parser.add_argument("--model",    required=True,
-                        help="Model to run (dino, jepa, patchtst, …)")
+                        help="Model to run (dino_timemixer, dino_patchtst, patchtst, …)")
     parser.add_argument("--dataset",  required=True, choices=IN_DOMAIN_DATASETS,
                         help="Dataset to pretrain and forecast on")
     parser.add_argument("--name",     required=True,

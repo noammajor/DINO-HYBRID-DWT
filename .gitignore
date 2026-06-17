@@ -32,3 +32,6 @@ env/
 # CSV / data files
 *.csv
 *.parquet
+
+# Bundled UCI HAR data under any backbone variant dir
+UCI HAR Dataset/

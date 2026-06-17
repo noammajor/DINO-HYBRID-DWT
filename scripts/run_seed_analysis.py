@@ -5,7 +5,7 @@ run_seed_analysis.py — Reproducibility sweep across 5 random seeds.
 For each seed, all models are pretrained at 8 encoder layers, then evaluated
 on forecasting, classification, and anomaly detection.
 
-Checkpoints are saved with a _seedN suffix (e.g. JEPA_monash_synthetic_layers8_seed2/).
+Checkpoints are saved with a _seedN suffix (e.g. checkpoints_monash_synthetic_layers8_seed2/).
 
 Results saved to:
   results/seed_analysis_forecast.csv
@@ -15,7 +15,7 @@ Results saved to:
 Usage:
     python run_seed_analysis.py                                          # all seeds, all models
     python run_seed_analysis.py --seeds 0 1 2                            # specific seeds
-    python run_seed_analysis.py --models dino ntp                        # specific models
+    python run_seed_analysis.py --models dino_timemixer patchtst          # specific models
     python run_seed_analysis.py --pretrain_source synthetic              # pretrain data source
     python run_seed_analysis.py --skip_pretrain                          # forecasting/cls/anom only
     python run_seed_analysis.py --gpu_override 3                         # all models on one GPU
@@ -46,23 +46,19 @@ CLASSIFICATION_DATASETS = [
 ]
 ANOMALY_DATASETS = ["SMD", "MSL", "SMAP", "SWaT", "PSM"]
 
-# Per-model LR overrides (from run_layer_sweep.py LAYER_LR / NTP_PATCHTST_TIMEDART_LAYER_LR)
+# Per-model LR overrides (from run_layer_sweep.py LAYER_LR)
 MODEL_LR = {
-    "dino":        5e-4,
-    "jepa":        5e-4,
-    "lejepa":      5e-4,
-    "patchtst":    5e-5,
-    "ntp":         5e-5,
-    "timedart":    5e-5,
+    "dino_timemixer": 5e-4,
+    "dino_patchtst":  5e-4,
+    "dino_ts2vec":   5e-4,
+    "patchtst":       5e-5,
 }
 
 MODEL_GPU = {
-    "dino":        0,
-    "jepa":        1,
-    "lejepa":      2,
-    "patchtst":    3,
-    "ntp":         4,
-    "timedart":    5,
+    "dino_timemixer": 0,
+    "dino_patchtst":  1,
+    "dino_ts2vec":    2,
+    "patchtst":       3,
 }
 
 ALL_MODELS = list(MODEL_GPU.keys())

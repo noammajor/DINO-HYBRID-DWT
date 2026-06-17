@@ -14,7 +14,7 @@ Results saved per model to:
 Usage:
     python run_layer_forecast.py                        # all models, all layers
     python run_layer_forecast.py --layers 4 12
-    python run_layer_forecast.py --models dino lejepa
+    python run_layer_forecast.py --models dino_timemixer dino_patchtst patchtst
     python run_layer_forecast.py --linear_probe false   # fine-tune mode
     python run_layer_forecast.py --pred_lens 96 192     # only --best_only mode
     python run_layer_forecast.py --dry_run
@@ -47,14 +47,11 @@ PRED_LENS     = [96, 192, 336, 720]
 
 # Model → GPU assignment (match run_layer_sweep.py)
 MODEL_GPU = {
-    "dino":            0,
-    "jepa":            7,
-    "lejepa":          2,
+    "dino_timemixer":  0,
+    "dino_patchtst":   1,
+    "dino_ts2vec":    2,
     "patchtst":        3,
-    "ntp":             4,
     "patchtst_random": 5,
-    "timedart":        6,
-    "softclt":         1,
     "timemixer":       7,
 }
 
@@ -70,66 +67,21 @@ def discover_checkpoints(model: str, encoder_layers: int,
     suffix = f"_layers{encoder_layers}"
     src_tag = f"_{pretrain_source.replace('+', '_')}" if pretrain_source and pretrain_source != "monash" else ""
 
-    if model == "dino":
+    if model in ("dino_timemixer", "dino_patchtst", "dino_ts2vec"):
+        _base = {"dino_timemixer": "checkpoints", "dino_patchtst": "checkpoints_patchtst", "dino_ts2vec": "checkpoints_ts2vec"}[model]
         if output_dir is not None:
             base = output_dir.rstrip('/')
             if base.startswith('./'):
                 base = base[2:]
             ckpt_dir = Path(base + suffix) if Path(base).is_absolute() else (ROOT / (base + suffix))
         else:
-            ckpt_dir = ROOT / f"checkpoints{src_tag}{suffix}"
+            ckpt_dir = ROOT / f"{_base}{src_tag}{suffix}"
         found = sorted(
             int(p.stem.replace("checkpoint", ""))
             for p in ckpt_dir.glob("checkpoint*.pth")
             if p.stem.replace("checkpoint", "").isdigit()
         ) if ckpt_dir.exists() else []
         return found or []
-
-    elif model == "jepa":
-        import re as _re
-        ckpt_dir = ROOT / "output_model" / f"JEPA{src_tag}{suffix}"
-        found = sorted(
-            int(m.group(1))
-            for p in ckpt_dir.glob("_epoch*best_model.pt")
-            for m in [_re.search(r'_epoch(\d+)best_model', p.stem)]
-            if m
-        ) if ckpt_dir.exists() else []
-        return found or []
-
-    elif model == "lejepa":
-        import re as _re
-        ckpt_dir = ROOT / "output_model" / f"LE-JEPA{src_tag}{suffix}"
-        found = sorted(
-            int(m.group(1))
-            for p in ckpt_dir.glob("_epoch*best_model.pt")
-            for m in [_re.search(r'_epoch(\d+)best_model', p.stem)]
-            if m
-        ) if ckpt_dir.exists() else []
-        return found or []
-
-    elif model == "ntp":
-        import re as _re, importlib.util as _ilu
-        _spec = _ilu.spec_from_file_location("config_ntp", ROOT / "NTP" / "config_ntp.py")
-        _mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
-        _cfg = _mod.config
-        # override n_layers to build correct filename prefix
-        _cfg = dict(_cfg); _cfg['n_layers'] = encoder_layers
-        _cfg['pretrained_model_id'] = encoder_layers  # mirrors run_ntp save-side logic
-        _prefix = (f"ntp_pretrained"
-                   f"_patch{_cfg['patch_size']}"
-                   f"_patches{_cfg['ratio_patches']}"
-                   f"_epochs{_cfg['num_epochs']}"
-                   f"_model{_cfg['pretrained_model_id']}_epoch")
-        _ntp_src = pretrain_source if pretrain_source else "monash"
-        save_dir = ROOT / "NTP" / "saved_models" / _ntp_src / "ntp" / f"layers{encoder_layers}"
-        found = sorted(set(
-            int(m.group(1))
-            for p in save_dir.glob("*.pt")
-            if p.stem.startswith(_prefix)
-            for m in [_re.search(r'_epoch(\d+)$', p.stem)]
-            if m
-        )) if save_dir.exists() else []
-        return found or [None]
 
     elif model == "patchtst":
         import importlib.util as _ilu
@@ -157,14 +109,6 @@ def discover_checkpoints(model: str, encoder_layers: int,
 
     elif model == "patchtst_random":
         return [None]
-
-    elif model == "timedart":
-        # TimeDart only saves ckpt_best.pth — no per-epoch tournament search
-        return ["best"]
-
-    elif model == "softclt":
-        # SoftCLT saves checkpoint_best.pth — no per-epoch tournament search
-        return ["best"]
 
     elif model == "timemixer":
         # TimeMixer is supervised (no pretraining) — trains fresh each eval call
@@ -223,7 +167,7 @@ def eval_checkpoint(model: str, dataset: str, pred_len: int, ckpt,
 
     with log_to_file(log_path):
         try:
-            if model in ("jepa", "lejepa", "dino", "softclt"):
+            if model in ("dino_timemixer", "dino_patchtst", "dino_ts2vec"):
                 result = run(
                     model=model,
                     skip_train=True,
@@ -237,7 +181,7 @@ def eval_checkpoint(model: str, dataset: str, pred_len: int, ckpt,
                 )
                 return (result[1], None) if result else None
 
-            elif model in ("ntp", "patchtst", "patchtst_random"):
+            elif model in ("patchtst", "patchtst_random"):
                 kwargs = dict(
                     model=model,
                     skip_train=True,
@@ -254,22 +198,6 @@ def eval_checkpoint(model: str, dataset: str, pred_len: int, ckpt,
                 if isinstance(result, tuple) and len(result) >= 2:
                     return (result[0], result[1])  # (mse, mae)
                 return (result, None) if result is not None else None
-
-            elif model == "timedart":
-                result = run(
-                    model="timedart",
-                    skip_train=True,
-                    forecast_dataset=dataset,
-                    pred_lens=[pred_len],
-                    encoder_layers=encoder_layers,
-                    gpu=gpu,
-                    pretrain_source=pretrain_source,
-                    linear_probe=linear_probe,
-                    head_type=head_type,
-                )
-                if isinstance(result, tuple) and len(result) >= 3:
-                    return (result[1], result[2])
-                return (result[1], None) if isinstance(result, tuple) else None
 
             elif model == "timemixer":
                 # TimeMixer trains supervised from scratch — always skip_train=False
@@ -384,7 +312,7 @@ def eval_best(model: str, dataset: str, pred_len: int,
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     with log_to_file(log_path):
         try:
-            if model in ("jepa", "lejepa", "dino"):
+            if model in ("dino_timemixer", "dino_patchtst", "dino_ts2vec"):
                 result = run(model=model, skip_train=True, forecast_dataset=dataset,
                              pred_lens=[pred_len], checkpoints=["best"],
                              encoder_layers=encoder_layers,
@@ -393,7 +321,7 @@ def eval_best(model: str, dataset: str, pred_len: int,
                              head_type=head_type,
                              output_dir=output_dir)
                 return (result[1], None) if result else None
-            elif model in ("ntp", "patchtst", "patchtst_random"):
+            elif model in ("patchtst", "patchtst_random"):
                 kwargs = dict(model=model, skip_train=True, forecast_dataset=dataset,
                               pred_lens=[pred_len], encoder_layers=encoder_layers,
                               pretrain_source=pretrain_source,
@@ -405,15 +333,6 @@ def eval_best(model: str, dataset: str, pred_len: int,
                 if isinstance(result, tuple) and len(result) >= 2:
                     return (result[0], result[1])
                 return (result, None) if result is not None else None
-            elif model == "timedart":
-                result = run(model="timedart", skip_train=True, forecast_dataset=dataset,
-                             pred_lens=[pred_len], encoder_layers=encoder_layers, gpu=gpu,
-                             pretrain_source=pretrain_source,
-                             linear_probe=linear_probe,
-                             head_type=head_type)
-                if isinstance(result, tuple) and len(result) >= 3:
-                    return (result[1], result[2])
-                return (result[1], None) if isinstance(result, tuple) else None
             elif model == "timemixer":
                 result = run(model="timemixer", skip_train=False, forecast_dataset=dataset,
                              pred_lens=[pred_len], encoder_layers=encoder_layers,

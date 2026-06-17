@@ -16,7 +16,7 @@ Results saved to:
 
 Usage:
     python run_anomaly_sweep.py
-    python run_anomaly_sweep.py --models jepa lejepa --layers 8
+    python run_anomaly_sweep.py --models dino_timemixer dino_patchtst patchtst --layers 8
     python run_anomaly_sweep.py --datasets MSL SMAP SMD
     python run_anomaly_sweep.py --gpu_override 4
     python run_anomaly_sweep.py --pretrain_source monash+synthetic --layers 8
@@ -41,12 +41,10 @@ ANOMALY_DATASETS = ["SMD", "MSL", "SMAP", "SWaT", "PSM"]
 LAYER_CONFIGS = [2, 4, 8, 12, 24]
 
 MODEL_GPU = {
-    "dino":            0,
-    "jepa":            1,
-    "lejepa":          2,
+    "dino_timemixer":  0,
+    "dino_patchtst":   1,
+    "dino_ts2vec":    2,
     "patchtst":        3,
-    "ntp":             4,
-    "timedart":        5,
     "patchtst_random": 6,
 }
 ALL_MODELS = list(MODEL_GPU.keys())

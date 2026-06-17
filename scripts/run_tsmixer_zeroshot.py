@@ -74,7 +74,7 @@ def eval_one(dataset: str, pred_len: int, gpu: int,
     with log_to_file(log_path):
         try:
             result = run(
-                model            = "dino",
+                model            = "dino_timemixer",
                 task             = "forecast",   # skip_train=True, linear probe only
                 forecast_dataset = dataset,
                 pred_lens        = [pred_len],

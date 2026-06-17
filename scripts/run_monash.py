@@ -3,16 +3,15 @@
 run_monash.py — Pretrain each model on the Monash dataset and save a checkpoint every epoch.
 
 Usage:
-    python run_monash.py                    # pretrain all models on GPU 0
-    python run_monash.py --gpu 1            # use GPU 1
-    python run_monash.py --models dino ntp  # pretrain specific model(s)
+    python run_monash.py                        # pretrain all models on GPU 0
+    python run_monash.py --gpu 1                # use GPU 1
+    python run_monash.py --models dino_timemixer patchtst # pretrain specific model(s)
 
-Models: dino | jepa | ntp | patchtst
+Models: dino_timemixer | dino_patchtst | dino_ts2vec | patchtst
 Checkpoints are saved by each model to its own output directory:
-  dino        →  TSDiNO/checkpoints/checkpoint{epoch}.pth
-  jepa        →  JEPA/output_model/JEPA/_epoch{epoch}/
-  ntp         →  NTP/saved_models/monash/ntp/ntp_pretrained_*_epoch{epoch}.pt
-  patchtst    →  PatchTST_self_supervised/saved_models/monash/masked_patchtst/based_model/*_epoch{epoch}.pth
+  dino_timemixer →  tsdino_timemixer/checkpoints/checkpoint{epoch}.pth
+  dino_patchtst  →  checkpoints_patchtst/checkpoint{epoch}.pth
+  patchtst       →  PatchTST_self_supervised/saved_models/monash/masked_patchtst/based_model/*_epoch{epoch}.pth
 """
 
 import argparse
@@ -23,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT   = Path(__file__).parent.parent
-MODELS = ["jepa", "ntp", "patchtst", "dino"]
+MODELS = ["patchtst", "dino_timemixer", "dino_patchtst", "dino_ts2vec"]
 
 
 def pretrain_one(model: str, gpu: int, log_dir: Path) -> bool:

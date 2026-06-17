@@ -7,16 +7,14 @@ This script pre-trains with num_patches=72 (72 × 16 = 1152 timesteps), covering
 length of the longest UEA classification datasets (SelfRegulationSCP2 T=1152).
 
 Checkpoint locations:
-  dino        → checkpoints_layers8_cw1152/
-  jepa → output_model/JEPA_layers8_cw1152/
-  lejepa      → output_model/LE-JEPA_layers8_cw1152/
-  patchtst    → PatchTST_self_supervised/saved_models/  (context_points=1152)
-  ntp         → NTP/saved_models/  (ratio_patches=72)
+  dino_timemixer → checkpoints_layers8_cw1152/
+  dino_patchtst  → checkpoints_patchtst_layers8_cw1152/
+  patchtst       → PatchTST_self_supervised/saved_models/  (context_points=1152)
 
 Usage:
     python pretrain_cls_encoder.py
-    python pretrain_cls_encoder.py --models dino --ckpt_tag tsmixer
-    python pretrain_cls_encoder.py --models jepa lejepa
+    python pretrain_cls_encoder.py --models dino_timemixer --ckpt_tag tsmixer
+    python pretrain_cls_encoder.py --models dino_timemixer dino_patchtst patchtst
     python pretrain_cls_encoder.py --pretrain_source monash+synthetic
     python pretrain_cls_encoder.py --gpu_override 2
     python pretrain_cls_encoder.py --dry_run
@@ -39,21 +37,17 @@ DEFAULT_PATCH_SIZE       = 16
 
 # Per-model LR (same as run_layer_sweep.py for 8-layer configs)
 MODEL_LR = {
-    "dino":        5e-4,
-    "jepa":        5e-4,
-    "lejepa":      5e-4,
-    "patchtst":    5e-5,
-    "ntp":         5e-5,
-    "timedart":    5e-5,
+    "dino_timemixer": 5e-4,
+    "dino_patchtst":  5e-4,
+    "dino_ts2vec":   5e-4,
+    "patchtst":       5e-5,
 }
 
 MODEL_GPU = {
-    "dino":        0,
-    "jepa":        1,
-    "lejepa":      2,
-    "patchtst":    3,
-    "ntp":         4,
-    "timedart":    5,
+    "dino_timemixer": 0,
+    "dino_patchtst":  1,
+    "dino_ts2vec":    2,
+    "patchtst":       3,
 }
 
 ALL_MODELS = list(MODEL_GPU.keys())
@@ -85,19 +79,19 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
         "--lr",               str(lr),
         "--pretrain_source",  pretrain_source,
     ]
-    if ckpt_tag is not None and model == "dino":
+    if ckpt_tag is not None and model.startswith("dino"):
         cmd += ["--ckpt_tag", ckpt_tag]
-    if mlm_phi is not None and model == "dino":
+    if mlm_phi is not None and model.startswith("dino"):
         cmd += ["--mlm_phi", str(mlm_phi)]
-    if mlm_mode is not None and model == "dino":
+    if mlm_mode is not None and model.startswith("dino"):
         cmd += ["--mlm_mode", mlm_mode]
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
-    ckpt_info = f"  ckpt_tag={ckpt_tag}" if ckpt_tag and model == "dino" else ""
-    mlm_info  = f"  mlm_phi={mlm_phi}"  if mlm_phi  is not None and model == "dino" else ""
-    mlm_info += f"  mlm_mode={mlm_mode}" if mlm_mode is not None and model == "dino" else ""
+    ckpt_info = f"  ckpt_tag={ckpt_tag}" if ckpt_tag and model.startswith("dino") else ""
+    mlm_info  = f"  mlm_phi={mlm_phi}"  if mlm_phi  is not None and model.startswith("dino") else ""
+    mlm_info += f"  mlm_mode={mlm_mode}" if mlm_mode is not None and model.startswith("dino") else ""
     print(f"  [{model:12s}] GPU={gpu}  layers={encoder_layers}  "
           f"num_patches={num_patches}  cw={cw}  lr={lr}{ckpt_info}{mlm_info}"
           f"  log={log_path.relative_to(ROOT)}")
