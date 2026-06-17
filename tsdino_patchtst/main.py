@@ -94,14 +94,18 @@ def train_TS_DINO(args):
             patch_size=args.patch_len,
             transform=dataAugmentationDino,
         )
-        dataset2 = PatchTSTPretrainAdapter(
-            csv_path=args.data_path_forecast_training,
-            split='train',
-            seq_len=_seq_len,
-            patch_size=args.patch_len,
-            transform=dataAugmentationDino,
-        )
-        combined_dataset = ConcatDataset([dataset1, dataset2])
+        if args.data_path_forecast_training != args.data_path:
+            dataset2 = PatchTSTPretrainAdapter(
+                csv_path=args.data_path_forecast_training,
+                split='train',
+                seq_len=_seq_len,
+                patch_size=args.patch_len,
+                transform=dataAugmentationDino,
+            )
+            combined_dataset = ConcatDataset([dataset1, dataset2])
+        else:
+            # in-domain: pretrain and forecast CSV are the same file — don't duplicate
+            combined_dataset = dataset1
 
     # ── val dataset (same source, split='val') ────────────────────────────────
     _val_kwargs = dict(_shared_kwargs, split='val')
