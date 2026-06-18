@@ -13,7 +13,8 @@ class DWTAugmentation:
                  finest_levels=1,
                  high_perturb_noise_range=(0.03, 0.08),
                  band_scale_approx_range=(0.9, 1.1),
-                 band_scale_detail_range=(0.6, 1.4)):
+                 band_scale_detail_range=(0.6, 1.4),
+                 wavelet_pool=None):
         """
         Discrete Wavelet Transform augmentation for time series.
 
@@ -30,6 +31,7 @@ class DWTAugmentation:
           'band_scale'      – randomly scale each frequency band independently.
         """
         self.wavelet                  = wavelet
+        self.wavelet_pool             = wavelet_pool
         self.level                    = level
         self.mode                     = mode
         self.soft_threshold_sigma     = soft_threshold_sigma
@@ -44,15 +46,22 @@ class DWTAugmentation:
         threshold = sigma * np.abs(c).max() if c.size > 0 else 0.0
         return np.sign(c) * np.maximum(np.abs(c) - threshold, 0.0)
 
+    def _pick_wavelet(self):
+        """Sample a wavelet per call from wavelet_pool if given, else the fixed wavelet."""
+        if self.wavelet_pool:
+            return random.choice(self.wavelet_pool)
+        return self.wavelet
+
     def __call__(self, x):
         # x: [seq_len, n_vars] tensor
         device, dtype = x.device, x.dtype
         x_np = x.cpu().numpy()
         seq_len, n_vars = x_np.shape
         result = np.zeros_like(x_np)
+        wavelet = self._pick_wavelet()   # one wavelet per call (same for dec/rec & all channels)
 
         for v in range(n_vars):
-            coeffs = pywt.wavedec(x_np[:, v], self.wavelet, level=self.level)
+            coeffs = pywt.wavedec(x_np[:, v], wavelet, level=self.level)
             # coeffs[0]  = approximation (low-freq)
             # coeffs[1:] = detail levels, finest last (coeffs[-1] = finest)
 
@@ -104,7 +113,7 @@ class DWTAugmentation:
             else:
                 raise ValueError(f"Unknown DWT mode: {self.mode}")
 
-            rec = pywt.waverec(new_coeffs, self.wavelet)
+            rec = pywt.waverec(new_coeffs, wavelet)
             result[:, v] = rec[:seq_len]  # waverec may produce 1 extra sample
 
         return torch.tensor(result, dtype=dtype, device=device)

@@ -156,7 +156,7 @@ def _family_pipeline_sequential(objectives, family, gpu, datasets, root, skip_pr
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    global SEED, MODEL, BACKBONE
+    global SEED, MODEL, BACKBONE, ENCODER_LAYERS
     p = argparse.ArgumentParser(description="DWT-aug × objective × dataset in-domain grid")
     p.add_argument("--root", required=True, help="Root tag for logs/checkpoints folder")
     p.add_argument("--gpus", nargs="+", type=int, required=True,
@@ -169,6 +169,8 @@ def main():
     p.add_argument("--families",   nargs="+", default=FAMILY_ORDER,    choices=FAMILY_ORDER)
     p.add_argument("--objectives", nargs="+", default=OBJECTIVE_ORDER, choices=OBJECTIVE_ORDER)
     p.add_argument("--datasets",   nargs="+", default=DATASETS)
+    p.add_argument("--encoder_layers", type=int, default=ENCODER_LAYERS,
+                   help=f"Encoder depth (default {ENCODER_LAYERS})")
     p.add_argument("--seed",       type=int, default=SEED)
     p.add_argument("--sequential", action="store_true",
                    help="Run the 3 objectives one-at-a-time per GPU (only one heavy run resident). "
@@ -179,6 +181,7 @@ def main():
     SEED = args.seed
     MODEL = args.model
     BACKBONE = args.backbone_type
+    ENCODER_LAYERS = args.encoder_layers
 
     if len(args.gpus) != len(args.families):
         p.error(f"--gpus ({len(args.gpus)}) must match number of families ({len(args.families)})")
