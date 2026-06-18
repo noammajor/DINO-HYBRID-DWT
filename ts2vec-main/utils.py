@@ -59,7 +59,7 @@ def centerize_vary_length_series(x):
 
 def data_dropout(arr, p):
     B, T = arr.shape[0], arr.shape[1]
-    mask = np.full(B*T, False, dtype=np.bool)
+    mask = np.full(B*T, False, dtype=bool)
     ele_sel = np.random.choice(
         B*T,
         size=int(B*T*p),
