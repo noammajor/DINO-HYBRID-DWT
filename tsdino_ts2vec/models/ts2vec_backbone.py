@@ -86,10 +86,17 @@ class TS2VecForDINO(nn.Module):
         # instance norm for the forecasting head (mirrors PatchTST)
         self.normalization = RevIN(c_in, affine=True)
 
+        # Forecast head flattens the FULL token embedding (all T timestep reps), mirroring
+        # PatchTST/TimeMixer — not just the last-step rep. seq_len = num_patch * patch_len.
+        _num_patch = kwargs.get('num_patch')
+        self.seq_len = (_num_patch * patch_len) if _num_patch is not None else None
+
         self.head = None
         if head_type == "prediction":
+            if self.seq_len is None:
+                raise ValueError("TS2Vec prediction head needs num_patch (→ seq_len) at construction")
             self.head = nn.Sequential(nn.Dropout(head_dropout),
-                                      nn.Linear(d_model, target_dim * c_in))
+                                      nn.Linear(self.seq_len * d_model, target_dim * c_in))
         elif head_type == "classification":
             self.head = nn.Sequential(nn.Dropout(head_dropout),
                                       nn.Linear(d_model, target_dim))
@@ -149,8 +156,8 @@ class TS2VecForDINO(nn.Module):
             z    = self._to_series(z)
             zn   = self.normalization(z, mode='norm')
             reps = self._encode_tokens(zn)                 # [B, T, d_model]
-            pooled = reps[:, -1, :]                        # last-step rep
-            out  = self.head(pooled)                       # [B, pred_len * C]
+            flat = reps.reshape(reps.shape[0], -1)         # [B, T*d_model] — full token embedding
+            out  = self.head(flat)                         # [B, pred_len * C]
             out  = out.reshape(out.shape[0], self.pred_len, self.n_vars)
             out  = self.normalization(out, mode='denorm')
             return out
