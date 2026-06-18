@@ -156,6 +156,11 @@ def load_forecast_csv(name, univar=False):
         train_slice = slice(None, 12*30*24*4)
         valid_slice = slice(12*30*24*4, 16*30*24*4)
         test_slice = slice(16*30*24*4, 20*30*24*4)
+    elif name == 'weather':
+        # match our pipeline (TSLib Dataset_Custom): 0.7 / 0.1 / 0.2 train/val/test
+        train_slice = slice(None, int(0.7 * len(data)))
+        valid_slice = slice(int(0.7 * len(data)), int(0.8 * len(data)))
+        test_slice = slice(int(0.8 * len(data)), None)
     else:
         train_slice = slice(None, int(0.6 * len(data)))
         valid_slice = slice(int(0.6 * len(data)), int(0.8 * len(data)))
@@ -173,7 +178,9 @@ def load_forecast_csv(name, univar=False):
         dt_embed = np.expand_dims(dt_scaler.transform(dt_embed), 0)
         data = np.concatenate([np.repeat(dt_embed, data.shape[0], axis=0), data], axis=-1)
     
-    if name in ('ETTh1', 'ETTh2', 'electricity'):
+    if name in ('ETTh1', 'ETTh2', 'ETTm1', 'ETTm2', 'weather'):
+        pred_lens = [96, 192, 336, 720]          # our horizons
+    elif name == 'electricity':
         pred_lens = [24, 48, 168, 336, 720]
     else:
         pred_lens = [24, 48, 96, 288, 672]
