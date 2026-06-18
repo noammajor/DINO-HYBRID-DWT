@@ -63,8 +63,9 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3)).swapaxes(0, 3)
             test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3)).swapaxes(0, 3)
         else:
-            test_pred_inv = scaler.inverse_transform(test_pred)
-            test_labels_inv = scaler.inverse_transform(test_labels)
+            # sklearn >=1.x requires 2-D input; flatten all but the feature axis, then restore.
+            test_pred_inv   = scaler.inverse_transform(test_pred.reshape(-1, test_pred.shape[-1])).reshape(test_pred.shape)
+            test_labels_inv = scaler.inverse_transform(test_labels.reshape(-1, test_labels.shape[-1])).reshape(test_labels.shape)
             
         out_log[pred_len] = {
             'norm': test_pred,
