@@ -46,16 +46,17 @@ class TimeMixerMAE(nn.Module):
 
     def __init__(self, c_in, seq_len, block_len=8, mask_ratio=0.4,
                  d_model=128, e_layers=3, d_ff=256, dropout=0.1, head_dropout=0.1,
-                 **backbone_kwargs):
+                 use_norm=1, **backbone_kwargs):
         super().__init__()
         if seq_len % block_len != 0:
             raise ValueError(f"seq_len ({seq_len}) must be divisible by block_len ({block_len})")
         self.block_len = block_len
         self.mask_ratio = mask_ratio
         self.n_blocks = seq_len // block_len
+        self.use_revin = (use_norm == 1)
         self.encoder = TimeMixerEncoder(
             c_in=c_in, seq_len=seq_len, d_model=d_model, e_layers=e_layers,
-            d_ff=d_ff, dropout=dropout, **backbone_kwargs)
+            d_ff=d_ff, dropout=dropout, use_norm=use_norm, **backbone_kwargs)
         self.head = BlockMAEHead(d_model, block_len, head_dropout)
 
     def forward(self, x):
@@ -67,8 +68,14 @@ class TimeMixerMAE(nn.Module):
         if Tb < T:
             ts_mask = F.pad(ts_mask, (0, T - Tb), value=False)
 
-        tokens = self.encoder(x, mask=ts_mask)                       # [B*C, T, d_model]
-        recon = self.head(tokens)                                    # [B*C, Tb]
+        # RevIN-normalize → encode (masked) → reconstruct → denorm back to raw,
+        # so RevIN is active during pretraining (matches the forecasting path).
+        tokens = self.encoder(x, mask=ts_mask, normalize=self.use_revin)  # [B*C, T, d_model]
+        recon = self.head(tokens)                                    # [B*C, Tb] (normalized space)
+        if self.use_revin:
+            recon = recon.reshape(B, C, Tb).permute(0, 2, 1)         # [B, Tb, C]
+            recon = self.encoder.normalize_layers[0](recon, 'denorm')
+            recon = recon.permute(0, 2, 1).reshape(B * C, Tb)        # [B*C, Tb]
 
         target = x[:, :Tb, :].permute(0, 2, 1).reshape(B * C, Tb)    # [B*C, Tb]
         mask = (block_mask.unsqueeze(1).expand(B, C, self.n_blocks)

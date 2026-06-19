@@ -11,6 +11,7 @@ Example:
 """
 import os
 import sys
+import math
 import argparse
 from pathlib import Path
 
@@ -37,8 +38,10 @@ def get_args():
     p.add_argument('--epochs', type=int, default=100)
     p.add_argument('--batch_size', type=int, default=128)
     p.add_argument('--lr', type=float, default=1e-3)
+    p.add_argument('--warmup_frac', type=float, default=0.05,
+                   help='fraction of total steps for linear LR warmup')
     p.add_argument('--weight_decay', type=float, default=1e-4)
-    p.add_argument('--clip_grad', type=float, default=3.0)
+    p.add_argument('--clip_grad', type=float, default=1.0)
     p.add_argument('--dropout', type=float, default=0.1)
     p.add_argument('--head_dropout', type=float, default=0.1)
     p.add_argument('--saveckp_freq', type=int, default=10)
@@ -80,10 +83,19 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                   weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr,
-        total_steps=args.epochs * len(train_loader),
-        pct_start=0.3, anneal_strategy='cos')
+    # Linear warmup → cosine decay from peak (args.lr) to ~0. Decaying-from-peak
+    # (vs OneCycle ramping UP into a high LR) keeps MAE out of the unstable
+    # regime that caused the periodic blow-ups + output collapse.
+    total_steps = args.epochs * len(train_loader)
+    warmup_steps = max(1, int(args.warmup_frac * total_steps))
+
+    def _lr_lambda(step):
+        if step < warmup_steps:
+            return step / warmup_steps
+        prog = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * prog))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
 
     best = float('inf')
     for epoch in range(args.epochs):

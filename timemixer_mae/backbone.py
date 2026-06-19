@@ -103,17 +103,19 @@ class TimeMixerEncoder(nn.Module):
             enc = pdm(enc)
         return enc
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, normalize=True):
         """x: [B, T, C]; mask: [B, T] bool (True = masked) or None.
 
-        returns per-timestep tokens [B*C, T, d_model] (finest scale).
+        normalize=True applies per-instance RevIN (the normalize_layers); the
+        caller denorms the reconstruction. returns per-timestep tokens
+        [B*C, T, d_model] (finest scale).
         """
         B, T, C = x.shape
         mask_patches = None
         if mask is not None:
             mask_patches = mask.unsqueeze(1).expand(-1, C, -1).reshape(B * C, T)
         enc = self._embed_and_mix(
-            self._multi_scale_process(x, normalize=False), mask_patches=mask_patches)
+            self._multi_scale_process(x, normalize), mask_patches=mask_patches)
         return enc[0]   # [B*C, T, d_model]
 
     def encode(self, x, normalize):

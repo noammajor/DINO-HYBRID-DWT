@@ -15,7 +15,8 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${DATA_DIR:-$(cd "$REPO" && python -c "from data_paths import DATA_PATHS; print(DATA_PATHS['forecasting_data_dir'])")}"
 
 # ── knobs ────────────────────────────────────────────────────────────────────
-LR=0.01                 # TimeMixer learning rate
+NTP_LR=0.01             # TimeMixer LR (NTP self-heals, tolerates it)
+MAE_LR=1e-3             # MAE collapses at 0.01 — needs a lower LR + warmup/clip
 SEQ_LEN=336             # input window (as used in this repo)
 PRED_LEN=96             # NTP horizon + downstream forecast horizon
 BLOCK_LEN=8             # MAE block size
@@ -24,7 +25,7 @@ PRE_EPOCHS=80           # pretraining epochs
 FC_EPOCHS=30            # downstream forecasting epochs
 MODE=linear_probe       # downstream: linear_probe | finetune
 # backbone (this repo's defaults; TimeMixer paper uses d_model=16 d_ff=32 e_layers=2)
-D_MODEL=128; D_FF=256; E_LAYERS=3
+D_MODEL=128; D_FF=256; E_LAYERS=4
 DS_LAYERS=3; DS_WINDOW=2
 
 # name  csv  c_in   ("all datasets" = the 4 ETT; add weather/ECL/traffic below)
@@ -39,7 +40,8 @@ DATASETS=(
 )
 
 run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
-  local flow=$1 gpu=$2 entry name csv cin out log
+  local flow=$1 gpu=$2 entry name csv cin out log lr task_args
+  if [ "$flow" = mae ]; then lr=$MAE_LR; else lr=$NTP_LR; fi
   for entry in "${DATASETS[@]}"; do
     read -r name csv cin <<< "$entry"
     out="$REPO/timemixer_$flow/checkpoints/$name"
@@ -51,10 +53,10 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
       task_args="--pred_len $PRED_LEN"
     fi
 
-    echo "[$flow|gpu$gpu|$name] pretrain -> $log/pretrain.log"
+    echo "[$flow|gpu$gpu|$name] pretrain (lr=$lr) -> $log/pretrain.log"
     CUDA_VISIBLE_DEVICES=$gpu python "$REPO/timemixer_$flow/train.py" \
       --data_path "$DATA_DIR/$csv" --c_in "$cin" --seq_len $SEQ_LEN $task_args \
-      --lr $LR --epochs $PRE_EPOCHS --output_dir "$out" \
+      --lr $lr --epochs $PRE_EPOCHS --output_dir "$out" \
       --d_model $D_MODEL --d_ff $D_FF --e_layers $E_LAYERS \
       --down_sampling_layers $DS_LAYERS --down_sampling_window $DS_WINDOW \
       > "$log/pretrain.log" 2>&1
@@ -63,7 +65,7 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
     CUDA_VISIBLE_DEVICES=$gpu python "$REPO/timemixer_$flow/forecast.py" \
       --init_ckpt "$out/checkpoint_best.pth" --mode $MODE \
       --data_path "$DATA_DIR/$csv" --c_in "$cin" --seq_len $SEQ_LEN --pred_len $PRED_LEN \
-      --lr $LR --epochs $FC_EPOCHS \
+      --lr $lr --epochs $FC_EPOCHS \
       --d_model $D_MODEL --d_ff $D_FF --e_layers $E_LAYERS \
       --down_sampling_layers $DS_LAYERS --down_sampling_window $DS_WINDOW \
       > "$log/forecast.log" 2>&1
@@ -72,7 +74,7 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
 }
 
 [ -d "$DATA_DIR" ] || { echo "DATA_DIR not found: $DATA_DIR" >&2; exit 1; }
-echo "data=$DATA_DIR  lr=$LR  seq=$SEQ_LEN  pred=$PRED_LEN  mode=$MODE"
+echo "data=$DATA_DIR  mae_lr=$MAE_LR  ntp_lr=$NTP_LR  seq=$SEQ_LEN  pred=$PRED_LEN  mode=$MODE"
 run_flow mae 6 &
 run_flow ntp 7 &
 wait
