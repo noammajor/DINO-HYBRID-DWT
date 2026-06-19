@@ -12,6 +12,12 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${DATA_DIR:-$(cd "$REPO" && python -c "from data_paths import DATA_PATHS; print(DATA_PATHS['forecasting_data_dir'])")}"
 PRED_LENS="96 192 336 720"
 
+# GPU assignment (override via env). ours_336 -> 0,1   orig_720 -> 4,5
+SPARSE_GPU_OURS="${SPARSE_GPU_OURS:-0}"
+TB_GPU_OURS="${TB_GPU_OURS:-1}"
+SPARSE_GPU_ORIG="${SPARSE_GPU_ORIG:-4}"
+TB_GPU_ORIG="${TB_GPU_ORIG:-5}"
+
 # SparseTSF (model_type=mlp default, d_model 128, batch 256, 30 epochs):
 #   name csv data_key enc_in period lr
 SPARSE=(
@@ -86,10 +92,10 @@ run_timebase () {    # $1=seq_len  $2=gpu  $3=tag
 
 [ -d "$DATA_DIR" ] || { echo "DATA_DIR not found: $DATA_DIR" >&2; exit 1; }
 echo "data=$DATA_DIR"
-echo "  ours_336: SparseTSF->gpu0  TimeBase->gpu1   |   orig_720: SparseTSF->gpu5  TimeBase->gpu6"
-run_sparsetsf 336 0 ours_336 &
-run_timebase  336 1 ours_336 &
-run_sparsetsf 720 5 orig_720 &
-run_timebase  720 6 orig_720 &
+echo "  ours_336: SparseTSF->gpu$SPARSE_GPU_OURS  TimeBase->gpu$TB_GPU_OURS   |   orig_720: SparseTSF->gpu$SPARSE_GPU_ORIG  TimeBase->gpu$TB_GPU_ORIG"
+run_sparsetsf 336 "$SPARSE_GPU_OURS" ours_336 &
+run_timebase  336 "$TB_GPU_OURS"     ours_336 &
+run_sparsetsf 720 "$SPARSE_GPU_ORIG" orig_720 &
+run_timebase  720 "$TB_GPU_ORIG"     orig_720 &
 wait
 echo "ALL DONE — results in logs/baselines/{ours_336,orig_720}/{SparseTSF,TimeBase}/<dataset>/<seq>_<pred>.log"
