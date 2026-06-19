@@ -35,3 +35,13 @@ env/
 
 # Bundled UCI HAR data under any backbone variant dir
 UCI HAR Dataset/
+
+# Training logs and generated visualizations
+logs/
+Visuals/
+Visuals1/
+vis/*.png
+vis/aug_log.txt
+vis/DWT/
+vis/MODWT/
+vis/SWT/

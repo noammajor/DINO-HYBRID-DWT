@@ -161,3 +161,44 @@ for r, (nm, s) in enumerate(datasets):
         a.grid(alpha=0.3); a.legend(fontsize=7)
 plt.tight_layout(); plt.savefig("logs/demo_aug_student.png", dpi=150)
 print("Saved logs/demo_aug_student.png")
+
+
+# ── COEFFICIENT-level view: what low_pass / soft_threshold do to the coeffs ───
+WAV = 'db4'   # representative; db4/6/8 behave alike
+BANDS = [f'cA{LEVEL}'] + [f'cD{i}' for i in range(LEVEL, 0, -1)]
+
+def lp_coeffs(c): return [c[0]] + [np.zeros_like(d) for d in c[1:]]
+def st_coeffs(c):
+    def st(d):
+        t = SIGMA * np.abs(d).max() if d.size else 0.0
+        return np.sign(d) * np.maximum(np.abs(d) - t, 0.0)
+    return [c[0]] + [st(d) for d in c[1:]]
+
+print(f"\nDWT coefficient ENERGY per band (% of total, {WAV}, level {LEVEL}) — "
+      f"low_pass keeps only cA{LEVEL}, zeros every cD:")
+for nm, s in datasets:
+    c = pywt.wavedec(s, WAV, level=LEVEL)
+    e = np.array([np.sum(x ** 2) for x in c]); e = 100 * e / e.sum()
+    print(f"  {nm:12s} " + "   ".join(f"{b} {v:5.1f}%" for b, v in zip(BANDS, e)))
+
+fig, ax = plt.subplots(len(datasets), 1, figsize=(12, 7), squeeze=False)
+for r, (nm, s) in enumerate(datasets):
+    a = ax[r][0]
+    c = pywt.wavedec(s, WAV, level=LEVEL)
+    orig = np.concatenate(c)
+    lp   = np.concatenate(lp_coeffs(c))
+    st_  = np.concatenate(st_coeffs(c))
+    bounds = np.cumsum([len(x) for x in c])[:-1]
+    a.plot(orig, lw=0.8, color='gray',       label='original coeffs')
+    a.plot(st_,  lw=0.9, color='tab:orange',  label='soft_threshold')
+    a.plot(lp,   lw=1.1, color='tab:green',   label='low_pass (detail → 0)')
+    seg = [0] + list(bounds) + [len(orig)]
+    ytxt = np.max(np.abs(orig)) * 0.85
+    for b in bounds:
+        a.axvline(b, color='k', ls=':', alpha=0.4)
+    for lbl, s0, s1 in zip(BANDS, seg[:-1], seg[1:]):
+        a.text((s0 + s1) / 2, ytxt, lbl, ha='center', fontsize=9, color='navy')
+    a.set_title(f"{nm} — DWT coeffs ({WAV}, level {LEVEL}): low_pass zeros all cD bands; soft_threshold shrinks")
+    a.grid(alpha=0.3); a.legend(fontsize=8, loc='lower right')
+plt.tight_layout(); plt.savefig("logs/demo_aug_coeffs.png", dpi=150)
+print("Saved logs/demo_aug_coeffs.png")

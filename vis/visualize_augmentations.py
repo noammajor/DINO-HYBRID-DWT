@@ -229,9 +229,26 @@ def load_backbone(ckpt_path, c_in, seq_len, device):
 
 @torch.no_grad()
 def get_repr(backbone, x, device):
-    """x: [seq_len, C]  →  repr: [C, d_model] (mean-pooled across variables)."""
+    """x: [seq_len, C]  →  repr: [C, d_model] (cross-attention pooled)."""
     out = backbone(x.unsqueeze(0).float().to(device))   # [1, C, d_model]
     return out[0]                                        # [C, d_model]
+
+
+@torch.no_grad()
+def get_tokens(backbone, x, device):
+    """x: [seq_len, C]  →  per-timestep tokens [T, C, d_model] (pre-pooling).
+    Uses forward_ibot so the high-frequency, per-timestep augmentation effect
+    survives (the cross-attention pooling in forward() averages it away)."""
+    out = backbone.forward_ibot(x.unsqueeze(0).float().to(device))  # [1, T, C, d_model]
+    return out[0]                                                    # [T, C, d_model]
+
+
+def token_rel_l2(a, b):
+    """Per-token relative L2 distance, averaged over timesteps and channels.
+    a, b: [T, C, d_model]."""
+    num = (a - b).norm(dim=-1)                # [T, C]
+    den = a.norm(dim=-1).clamp_min(1e-8)      # [T, C]
+    return (num / den).mean().item()
 
 
 def cosine_sim(a, b):
@@ -239,6 +256,15 @@ def cosine_sim(a, b):
     a = F.normalize(a, dim=-1)
     b = F.normalize(b, dim=-1)
     return (a * b).sum(dim=-1).mean().item()             # scalar
+
+
+def rel_l2(a, b):
+    """Relative L2 distance ‖a-b‖ / ‖a‖, mean across channels.
+    Unlike cosine it does not normalise away magnitude, so it stays sensitive
+    even when the two representations point in nearly the same direction."""
+    num = (a - b).norm(dim=-1)
+    den = a.norm(dim=-1).clamp_min(1e-8)
+    return (num / den).mean().item()
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -278,7 +304,7 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
         "Overlay: orig / teacher / student",
         "FFT power spectrum",
         "Phase: teacher  sym4 (—) vs db4 (--)",
-        "Repr cosine-sim to original",
+        "Per-token rel-L2 dist to original",
     ]
 
     for vi, var in enumerate(var_indices):
@@ -320,7 +346,7 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
             ax.plot(sym_v, color=c['orig'],    lw=0.85, alpha=0.8,  label=f"sym4{sfx}")
             ax.plot(db_v,  color=c['student'], lw=0.85, alpha=0.8, ls='--', label=f"db4{sfx}")
 
-        # ── panel 4: representation cosine similarity ──────────────────────
+        # ── panel 4: per-token relative-L2 distance to original ────────────
         ax = axes[3, vi]
         if backbones:
             n_ckpt  = len(backbones)
@@ -331,25 +357,24 @@ def make_figure(dataset_name, samples, futures, var_indices, col_names,
 
             repr_src = backbone_samples if backbone_samples is not None else samples
             for ci, (backbone, label) in enumerate(zip(backbones, ckpt_labels)):
-                t_sims, s_sims = [], []
+                t_d, s_d = [], []
                 for x in repr_src:
-                    r_orig    = get_repr(backbone, x,             device)
-                    r_teacher = get_repr(backbone, teacher_tf(x), device)
-                    r_student = get_repr(backbone, student_tf(x), device)
-                    t_sims.append(cosine_sim(r_orig, r_teacher))
-                    s_sims.append(cosine_sim(r_orig, r_student))
+                    r_orig    = get_tokens(backbone, x,             device)
+                    r_teacher = get_tokens(backbone, teacher_tf(x), device)
+                    r_student = get_tokens(backbone, student_tf(x), device)
+                    t_d.append(token_rel_l2(r_orig, r_teacher))
+                    s_d.append(token_rel_l2(r_orig, r_student))
 
                 col = _CKPT_COLORS[ci % len(_CKPT_COLORS)]
-                ax.bar(x_base + offsets[ci] - width*0.25, t_sims, width*0.45,
+                ax.bar(x_base + offsets[ci] - width*0.25, t_d, width*0.45,
                        color=col, alpha=0.85, label=f"{label} teacher")
-                ax.bar(x_base + offsets[ci] + width*0.25, s_sims, width*0.45,
+                ax.bar(x_base + offsets[ci] + width*0.25, s_d, width*0.45,
                        color=col, alpha=0.4,  hatch='//', label=f"{label} student")
 
-            ax.set_ylim(0, 1.05)
+            ax.set_ylim(bottom=0)
             ax.set_xticks(x_base)
             ax.set_xticklabels([f"s{i+1}" for i in range(n_samp)], fontsize=6)
-            ax.axhline(1.0, color='grey', lw=0.5, ls='--')
-            ax.set_ylabel("cosine sim to orig", fontsize=7)
+            ax.set_ylabel("per-token rel. L2  ‖Δ‖/‖orig‖", fontsize=7)
         else:
             ax.text(0.5, 0.5, "no checkpoints provided",
                     ha='center', va='center', transform=ax.transAxes, fontsize=8, color='grey')
