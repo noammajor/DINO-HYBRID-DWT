@@ -10,7 +10,9 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="${DATA_DIR:-$REPO/data}"
+# Resolve the CSV dir from the same source tsdino uses (data_paths.py); override
+# with DATA_DIR=/path ./run_timemixer_ssl.sh if needed.
+DATA_DIR="${DATA_DIR:-$(cd "$REPO" && python -c "from data_paths import DATA_PATHS; print(DATA_PATHS['forecasting_data_dir'])")}"
 
 # ── knobs ────────────────────────────────────────────────────────────────────
 LR=0.01                 # TimeMixer learning rate
@@ -31,7 +33,7 @@ DATASETS=(
   "etth2 ETTh2.csv 7"
   "ettm1 ETTm1.csv 7"
   "ettm2 ETTm2.csv 7"
-  # "weather weather.csv 21"
+  "weather weather.csv 21"
   # "electricity electricity.csv 321"
   # "traffic traffic.csv 862"
 )
