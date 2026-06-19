@@ -243,6 +243,7 @@ def run_dino(skip_train: bool = False,
              vicreg_cov_coeff: float = None,
              synthetic_data_dir: str = None,
              subset_frac: float = None,
+             window_stride: int = None,
              lr_forecasting: float = None,
              backbone: str = "timemixer"):
     if backbone not in ("timemixer", "patchtst", "ts2vec"):
@@ -344,6 +345,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['synthetic_data_dir'] = synthetic_data_dir
     if subset_frac is not None:
         dino_cfg['pretrain_subset_frac'] = subset_frac
+    if window_stride is not None:
+        dino_cfg['window_stride'] = window_stride
     if dwt_wavelet_pool is not None:
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
     if use_koleo is not None:
@@ -1642,6 +1645,7 @@ def run(model: str,
         vicreg_cov_coeff: float = None,
         synthetic_data_dir: str = None,
         subset_frac: float = None,
+        window_stride: int = None,
         phi: float = None,
         lr_forecasting: float = None):
     """
@@ -1751,6 +1755,7 @@ def run(model: str,
     if 'vicreg_cov_coeff'      in sig.parameters: kwargs['vicreg_cov_coeff']      = vicreg_cov_coeff
     if 'synthetic_data_dir'    in sig.parameters: kwargs['synthetic_data_dir']    = synthetic_data_dir
     if 'subset_frac'           in sig.parameters: kwargs['subset_frac']           = subset_frac
+    if 'window_stride'         in sig.parameters: kwargs['window_stride']         = window_stride
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
@@ -1856,6 +1861,8 @@ if __name__ == "__main__":
                         help="Override synthetic .arrow data dir (DINO synthetic pretraining only)")
     parser.add_argument("--subset_frac", type=float, default=None,
                         help="Train on a fresh random fraction of the pretrain windows each epoch (e.g. 0.25). DINO only.")
+    parser.add_argument("--window_stride", type=int, default=None,
+                        help="Stride between sliding windows for pretrain + forecast-train (default 1). Subsamples the DINO data pullers. Test eval stays stride-1.")
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
@@ -1892,6 +1899,7 @@ if __name__ == "__main__":
         vicreg_cov_coeff=args.vicreg_cov_coeff,
         synthetic_data_dir=args.synthetic_data_dir,
         subset_frac=args.subset_frac,
+        window_stride=args.window_stride,
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",
