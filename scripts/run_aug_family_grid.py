@@ -47,6 +47,7 @@ EPOCHS         = 80
 LR             = 5e-4
 MLM_PHI        = 0.6          # weight for DINO+iBOT / DINO+MAE blends (phi*DINO + (1-phi)*MLM)
 SEED           = 42          # fixed seed for all runs (overridable via --seed); also tags checkpoints _seedN
+BATCH          = None        # override pretrain batch_size_per_gpu (e.g. lower for 21-ch weather)
 
 DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather", "electricity"]
 
@@ -86,14 +87,17 @@ def _common_flags(objective: str, family: str, dataset: str, ckpt_tag: str) -> l
 
 
 def pretrain_cmd(objective, family, dataset, ckpt_tag) -> list:
-    return [
+    cmd = [
         _python, str(ROOT / "Train_and_downstream.py"),
         "--pretrain_only", "true",
         "--pretrain_dataset", dataset,
         "--forecast_dataset", dataset,
         "--epochs", str(EPOCHS),
         "--lr", str(LR),
-    ] + _common_flags(objective, family, dataset, ckpt_tag)
+    ]
+    if BATCH is not None:
+        cmd += ["--batch_size", str(BATCH)]
+    return cmd + _common_flags(objective, family, dataset, ckpt_tag)
 
 
 def forecast_cmd(objective, family, dataset, ckpt_tag) -> list:
@@ -156,7 +160,7 @@ def _family_pipeline_sequential(objectives, family, gpu, datasets, root, skip_pr
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    global SEED, MODEL, BACKBONE, ENCODER_LAYERS
+    global SEED, MODEL, BACKBONE, ENCODER_LAYERS, BATCH
     p = argparse.ArgumentParser(description="DWT-aug × objective × dataset in-domain grid")
     p.add_argument("--root", required=True, help="Root tag for logs/checkpoints folder")
     p.add_argument("--gpus", nargs="+", type=int, required=True,
@@ -172,6 +176,8 @@ def main():
     p.add_argument("--encoder_layers", type=int, default=ENCODER_LAYERS,
                    help=f"Encoder depth (default {ENCODER_LAYERS})")
     p.add_argument("--seed",       type=int, default=SEED)
+    p.add_argument("--batch_size", type=int, default=None,
+                   help="Override pretrain batch_size_per_gpu (e.g. 32 for 21-ch weather)")
     p.add_argument("--sequential", action="store_true",
                    help="Run the 3 objectives one-at-a-time per GPU (only one heavy run resident). "
                         "Use if iBOT/MAE OOM when run concurrently.")
@@ -182,6 +188,7 @@ def main():
     MODEL = args.model
     BACKBONE = args.backbone_type
     ENCODER_LAYERS = args.encoder_layers
+    BATCH = args.batch_size
 
     if len(args.gpus) != len(args.families):
         p.error(f"--gpus ({len(args.gpus)}) must match number of families ({len(args.families)})")

@@ -245,6 +245,7 @@ def run_dino(skip_train: bool = False,
              subset_frac: float = None,
              window_stride: int = None,
              lr_forecasting: float = None,
+             batch_size: int = None,
              backbone: str = "timemixer"):
     if backbone not in ("timemixer", "patchtst", "ts2vec"):
         raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst' or 'ts2vec')")
@@ -339,6 +340,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_phi'] = mlm_phi
     if mlm_mode is not None:
         dino_cfg['mlm_mode'] = mlm_mode
+    if batch_size is not None:
+        dino_cfg['batch_size_per_gpu'] = batch_size
     if backbone_type is not None:
         dino_cfg['backbone_type'] = backbone_type
     if synthetic_data_dir is not None:
@@ -1841,6 +1844,8 @@ if __name__ == "__main__":
                         help="Local (student) augmentation type, overrides config (e.g. 'lorentz', 'dwt_high_perturb')")
     parser.add_argument("--mlm_phi",    type=float, default=None,
                         help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
+    parser.add_argument("--batch_size", type=int,   default=None,
+                        help="Override pretrain batch_size_per_gpu (e.g. lower for 21-ch weather)")
     parser.add_argument("--mlm_mode",   type=str,   default=None,
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--backbone_type", type=str, default=None,
@@ -1890,6 +1895,7 @@ if __name__ == "__main__":
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
         mlm_mode=args.mlm_mode,
+        batch_size=args.batch_size,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
         use_koleo=(args.use_koleo.lower() == "true") if args.use_koleo is not None else None,
