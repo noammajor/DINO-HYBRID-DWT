@@ -1639,6 +1639,7 @@ def run(model: str,
         aug_local: str = None,
         mlm_phi: float = None,
         mlm_mode: str = None,
+        batch_size: int = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
         use_koleo: bool = None,
@@ -1749,6 +1750,7 @@ def run(model: str,
     if 'aug_local'             in sig.parameters: kwargs['aug_local']             = aug_local
     if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
+    if 'batch_size'            in sig.parameters: kwargs['batch_size']            = batch_size
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
     if 'use_koleo'             in sig.parameters: kwargs['use_koleo']             = use_koleo
