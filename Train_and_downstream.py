@@ -1893,6 +1893,9 @@ if __name__ == "__main__":
                         help="Number of LR warmup epochs (DINO only)")
     parser.add_argument("--ckpt_tag", type=str, default=None,
                         help="Extra tag appended to checkpoint directory name (e.g. 'wrLR')")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Explicit checkpoint output directory. If set WITHOUT --encoder_layers, "
+                             "it is used verbatim (no auto _src/_layers/_seed suffixing).")
     parser.add_argument("--aug_global", type=str, default=None,
                         help="Global (teacher) augmentation type, overrides config (e.g. 'galilien', 'dwt_soft_threshold')")
     parser.add_argument("--aug_local",  type=str, default=None,
@@ -1946,6 +1949,7 @@ if __name__ == "__main__":
         epochs_forecasting=args.epochs_forecasting,
         warmup_epochs=args.warmup_epochs,
         ckpt_tag=args.ckpt_tag,
+        output_dir=args.output_dir,
         aug_global=args.aug_global,
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
