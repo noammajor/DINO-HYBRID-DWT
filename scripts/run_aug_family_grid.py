@@ -160,7 +160,7 @@ def _family_pipeline_sequential(objectives, family, gpu, datasets, root, skip_pr
 # ── main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    global SEED, MODEL, BACKBONE, ENCODER_LAYERS, BATCH
+    global SEED, MODEL, BACKBONE, ENCODER_LAYERS, BATCH, EPOCHS
     p = argparse.ArgumentParser(description="DWT-aug × objective × dataset in-domain grid")
     p.add_argument("--root", required=True, help="Root tag for logs/checkpoints folder")
     p.add_argument("--gpus", nargs="+", type=int, required=True,
@@ -176,6 +176,8 @@ def main():
     p.add_argument("--encoder_layers", type=int, default=ENCODER_LAYERS,
                    help=f"Encoder depth (default {ENCODER_LAYERS})")
     p.add_argument("--seed",       type=int, default=SEED)
+    p.add_argument("--epochs", type=int, default=None,
+                   help=f"Override pretrain epochs (default {EPOCHS})")
     p.add_argument("--batch_size", type=int, default=None,
                    help="Override pretrain batch_size_per_gpu (e.g. 32 for 21-ch weather)")
     p.add_argument("--sequential", action="store_true",
@@ -189,6 +191,8 @@ def main():
     BACKBONE = args.backbone_type
     ENCODER_LAYERS = args.encoder_layers
     BATCH = args.batch_size
+    if args.epochs is not None:
+        EPOCHS = args.epochs
 
     if len(args.gpus) != len(args.families):
         p.error(f"--gpus ({len(args.gpus)}) must match number of families ({len(args.families)})")
