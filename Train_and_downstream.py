@@ -129,6 +129,7 @@ def _config_to_dino_args(cfg):
         step_size                   = cfg.get("step_size", 12),
         num_patches                 = cfg.get("num_patches", 32),
         n_layers                    = cfg.get("n_layers", 5),
+        tsmixer_e_layers            = cfg.get("tsmixer_e_layers", 3),  # actual TimeMixer/tsmixer backbone depth
         n_heads                     = cfg.get("n_heads", 16),
         embed_dim                   = cfg.get("embed_dim", 128),
         d_ff                        = cfg.get("d_ff", 512),
@@ -246,6 +247,7 @@ def run_dino(skip_train: bool = False,
              window_stride: int = None,
              lr_forecasting: float = None,
              batch_size: int = None,
+             tsmixer_e_layers: int = None,
              backbone: str = "timemixer"):
     if backbone not in ("timemixer", "patchtst", "ts2vec"):
         raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst' or 'ts2vec')")
@@ -302,6 +304,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['embed_dim'] = embed_dim
     if out_dim is not None:
         dino_cfg['out_dim'] = out_dim
+    if tsmixer_e_layers is not None:
+        dino_cfg['tsmixer_e_layers'] = tsmixer_e_layers
     if epochs is not None:
         dino_cfg['epochs'] = epochs
     if epochs_forecasting is not None:
@@ -1704,6 +1708,7 @@ def run(model: str,
         subset_frac: float = None,
         window_stride: int = None,
         phi: float = None,
+        tsmixer_e_layers: int = None,
         lr_forecasting: float = None):
     """
     Unified entry point. Each run handles ONE task.
@@ -1815,6 +1820,7 @@ def run(model: str,
     if 'subset_frac'           in sig.parameters: kwargs['subset_frac']           = subset_frac
     if 'window_stride'         in sig.parameters: kwargs['window_stride']         = window_stride
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
+    if 'tsmixer_e_layers'      in sig.parameters: kwargs['tsmixer_e_layers']      = tsmixer_e_layers
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
 
@@ -1908,6 +1914,9 @@ if __name__ == "__main__":
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--backbone_type", type=str, default=None,
                         help="TSDiNO is TimeMixer-only (tsmixer); kept for forward-compat, no PatchTST path here")
+    parser.add_argument("--tsmixer_e_layers", type=int, default=None,
+                        help="TimeMixer/tsmixer backbone depth (PDM blocks). Overrides config tsmixer_e_layers (default 3). "
+                             "Must match at pretrain AND forecast/load time.")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="Wavelet pool for random-per-sample DWT aug (e.g. sym4 sym6 sym8)")
     parser.add_argument("--use_koleo", type=str, default=None,
@@ -1950,6 +1959,7 @@ if __name__ == "__main__":
         warmup_epochs=args.warmup_epochs,
         ckpt_tag=args.ckpt_tag,
         output_dir=args.output_dir,
+        tsmixer_e_layers=args.tsmixer_e_layers,
         aug_global=args.aug_global,
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
