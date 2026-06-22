@@ -411,8 +411,68 @@ class HyperBolicGeometry(nn.Module):
 
     def __call__(self, x):
         t, y = self.to_poincare(x)
-        z0 = torch.randn(2, 1, device=x.device) 
+        z0 = torch.randn(2, 1, device=x.device)
         z0 = self.shift_magnitude * z0 / (z0.norm() + self.eps)
         u0, v0 = z0[0], z0[1]
-        y_new = self.mobius_add(t, y, u0, v0)  
+        y_new = self.mobius_add(t, y, u0, v0)
         return y_new
+
+
+# ── Vision-style augmentations (1D adaptations) ──────────────────────────────
+class gaussian_blur:
+    """Vision GaussianBlur analog for 1D series.
+
+    Smooths each channel along the time axis with a Gaussian kernel of random
+    sigma (drawn per sample). Encourages scale/high-frequency invariance, like
+    the blur DINO applies to one of its views.
+
+    x: [seq_len, n_vars] → same shape.
+    """
+    def __init__(self, sigma_range=(0.1, 2.0), truncate=3.0):
+        self.sigma_range = sigma_range
+        self.truncate    = truncate
+
+    def __call__(self, x):
+        seq_len, n_vars = x.shape
+        sigma  = random.uniform(*self.sigma_range)
+        if sigma <= 0:
+            return x
+        radius = max(1, int(self.truncate * sigma + 0.5))
+        k = 2 * radius + 1
+        if k >= seq_len:                       # kernel wider than the series → skip
+            return x
+        coords = torch.arange(k, device=x.device, dtype=x.dtype) - radius
+        kernel = torch.exp(-(coords ** 2) / (2.0 * sigma ** 2))
+        kernel = (kernel / kernel.sum()).view(1, 1, k)
+        inp = x.t().unsqueeze(1)               # [n_vars, 1, seq_len]
+        inp = F.pad(inp, (radius, radius), mode='reflect')
+        out = F.conv1d(inp, kernel)            # [n_vars, 1, seq_len]
+        return out.squeeze(1).t()              # [seq_len, n_vars]
+
+
+class jitter_contrast:
+    """SimCLR color-jitter analog for 1D series.
+
+    Combines, per sample:
+      • contrast   – scale about the per-channel temporal mean   (x-mean)*c + mean
+      • brightness – additive offset                             + b
+      • jitter     – additive Gaussian noise                     + N(0, std^2)
+
+    x: [seq_len, n_vars] → same shape.
+    """
+    def __init__(self, jitter_range=(0.0, 0.1),
+                 contrast_range=(0.7, 1.3),
+                 brightness_range=(-0.2, 0.2)):
+        self.jitter_range     = jitter_range
+        self.contrast_range   = contrast_range
+        self.brightness_range = brightness_range
+
+    def __call__(self, x):
+        c         = random.uniform(*self.contrast_range)
+        b         = random.uniform(*self.brightness_range)
+        noise_std = random.uniform(*self.jitter_range)
+        mean = x.mean(dim=0, keepdim=True)     # per-channel mean over time
+        out  = (x - mean) * c + mean + b
+        if noise_std > 0:
+            out = out + torch.randn_like(x) * noise_std
+        return out
