@@ -1044,11 +1044,35 @@ def run_timemixer(skip_train: bool = False,
                         else epochs if epochs is not None
                         else cfg.get('epochs_forecasting', 10))
 
+        # TM_REAL_MARKS=1 → use TimeMixer's native dataset (real calendar marks,
+        # timeenc=1), faithful to the original repo but on OUR splits/HPs.
+        # Default (0) keeps the zero-marks adapter we've been using for split-parity
+        # with PatchTST and the DINO models.
+        _use_real_marks = os.environ.get("TM_REAL_MARKS", "0") == "1"
+        if _use_real_marks:
+            from data_provider.data_loader import (
+                Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom)
+            _root      = os.path.dirname(os.path.abspath(_csv))
+            _fname     = os.path.basename(_csv)
+            _fname_low = _fname.lower()
+            _TM_DS = (Dataset_ETT_hour  if 'etth' in _fname_low else
+                      Dataset_ETT_minute if 'ettm' in _fname_low else
+                      Dataset_Custom)
+            print(f"  [TimeMixer] marks=REAL (timeenc=1, {_TM_DS.__name__})")
+        else:
+            print("  [TimeMixer] marks=ZERO (split-parity adapter)")
+
         for pred_len in pred_lens:
             def _fc_loader(split, _pl=pred_len):
-                ds = _FlatWindowAdapterTM(
-                    PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
-                    freq=freq)
+                if _use_real_marks:
+                    ds = _TM_DS(root_path=_root, flag=split,
+                                size=[seq_len, base_args.label_len, _pl],
+                                features='M', data_path=_fname,
+                                timeenc=1, freq=freq)
+                else:
+                    ds = _FlatWindowAdapterTM(
+                        PatchTSTForcastingAdapter(_csv, split, seq_len, _pl, patch_len),
+                        freq=freq)
                 return torch.utils.data.DataLoader(
                     ds, batch_size=_fc_bs, shuffle=(split == 'train'),
                     num_workers=_fc_nw, drop_last=True)
