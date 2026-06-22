@@ -869,6 +869,35 @@ def run_patchtst(skip_train: bool = False, pretrain_dataset: str = None, forecas
 
 # ── TimeMixer ─────────────────────────────────────────────────────────────────
 
+class _FlatWindowAdapterTM(torch.utils.data.Dataset):
+    """
+    Wraps PatchTSTForcastingAdapter and produces zero time marks of the correct
+    shape for TimeMixer / TSLib DataEmbedding_wo_pos (timeF encoding needs
+    mark_dim features). Returns (seq_x, seq_y, xmark, ymark) where marks are
+    zeros of shape [T, mark_dim].
+
+    label_len is accepted for call sites that prepend an encoder-overlap prefix
+    to seq_y (Autoformer/FEDformer); the marks are sized to the reshaped tensors
+    regardless, so it needs no special handling here.
+    """
+    _FREQ_DIM = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
+
+    def __init__(self, patched_ds, freq: str = 'h', label_len: int = 0):
+        self._ds = patched_ds
+        self._mark_dim = self._FREQ_DIM.get(freq, 4)
+
+    def __len__(self):
+        return len(self._ds)
+
+    def __getitem__(self, idx):
+        ctx, tgt = self._ds[idx]
+        seq_x = ctx.reshape(-1, ctx.shape[-1])   # [seq_len, C]
+        seq_y = tgt.reshape(-1, tgt.shape[-1])   # [label_len + pred_len, C]
+        xmark = torch.zeros(seq_x.shape[0], self._mark_dim)
+        ymark = torch.zeros(seq_y.shape[0], self._mark_dim)
+        return seq_x, seq_y, xmark, ymark
+
+
 def run_timemixer(skip_train: bool = False,
                   pretrain_dataset: str = None,
                   forecast_dataset: str = None,

@@ -853,13 +853,17 @@ def test_run(args):
     dataset_forecasting_test  = _DS_CLS(_root, split='test',  size=_size, features='M', data_path=_fname, scale=True)
 
     _is_distributed = utils.is_dist_avail_and_initialized()
+    # TS_FORECAST_DROP_LAST=1 drops the last incomplete batch on train/val/test,
+    # matching plain TimeMixer's forecast loaders (drop_last=True) for a fair
+    # head-to-head comparison. Default 0 = score every window.
+    _fc_drop_last = os.environ.get("TS_FORECAST_DROP_LAST", "0") == "1"
     data_loader_forecasting_train = torch.utils.data.DataLoader(
         dataset_forecasting_train,
         sampler=torch.utils.data.distributed.DistributedSampler(dataset_forecasting_train, shuffle=False) if _is_distributed else torch.utils.data.SequentialSampler(dataset_forecasting_train),
         batch_size=args.batch_size_forecast,
         num_workers=args.num_workers,
         pin_memory=True,
-        drop_last=False,
+        drop_last=_fc_drop_last,
     )
     data_loader_forecasting_test = torch.utils.data.DataLoader(
         dataset_forecasting_test,
@@ -867,7 +871,7 @@ def test_run(args):
         batch_size=args.batch_size_forecast,
         num_workers=args.num_workers,
         pin_memory=True,
-        drop_last=False,
+        drop_last=_fc_drop_last,
     )
     data_loader_forecasting_val = None
     if dataset_forecasting_val is not None:
@@ -877,7 +881,7 @@ def test_run(args):
             batch_size=args.batch_size_forecast,
             num_workers=args.num_workers,
             pin_memory=True,
-            drop_last=False,
+            drop_last=_fc_drop_last,
         )
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
