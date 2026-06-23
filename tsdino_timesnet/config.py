@@ -188,7 +188,7 @@ config = {
     "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground truth
     "ibot_out_dim":   1024,        # iBOT patch head output dim — kept at out_dim for TSMixer (65536 OOMs with timestep tokens)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM
-    "mlm_block_size": 8,           # MLM/MAE masking granularity: mask contiguous spans of N steps (1 = per-step, OFF)
+    "mlm_block_size": 1,           # MLM/MAE masking granularity: 1 = per-step (no blocks); set 8 for 8-step spans
     "recon_mask_ratio":   0.4,    # fraction of patches to mask for student
     "recon_loss_weight":  1.0,    # weight of reconstruction loss relative to DINO loss
 
