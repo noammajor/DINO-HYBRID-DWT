@@ -24,11 +24,13 @@ config = {
     "batch_size_per_gpu": 128,
 
     # ── Model architecture ────────────────────────────────────────────────────
-    "c_in": 7,          # number of input variables  (9 for UCI HAR)
+    "c_in": 1,          # univariate synthetic pretraining (channel-independent backbone)
+    # NOTE: patch_len/num_patches/step_size below are ONLY the data-loader's window
+    # arithmetic — TimesNet does NOT patch. window = (num_patches-1)*step + patch_len.
     "patch_len": 16,
-    "step_size": 16,    # stride between patches within window; window=(21-1)*16+16=336
-    "window_step": 336, # stride between windows; =window_size for non-overlapping
-    "num_patches": 21,  # window length in patches → 21×16 = 336 timesteps
+    "step_size": 16,    # (72-1)*16 + 16 = 1152
+    "window_step": 1152, # stride between windows; =window_size for non-overlapping
+    "num_patches": 72,  # → 1152-timestep pretraining window
     "n_layers": 4,
     "n_heads": 16,
     "embed_dim": 128,
@@ -213,20 +215,18 @@ config = {
 
     # ── Local overrides (TEMP: remove after local testing) ────────────────────
 
-    # ── Backbone: TimeMixer (TSMixer) ─────────────────────────────────────────
-    # This TSDiNO is TimeMixer-only. Multi-scale season/trend mixing.
-    # Values match TimeMixer's own config_timemixer.py defaults.
-    # NOTE: if tsmixer_down_sampling_layers > 0, all global_crops and local_crops
-    # must have crop_ratio=1.0 (the PDM Linear layers are sized for seq_len).
-    "tsmixer_d_model":              128,  # embedding dim inside the TSMixer backbone
-    "tsmixer_d_ff":                 256,  # feed-forward dim inside each PDM block
-    "tsmixer_e_layers":             3,    # number of PastDecomposableMixing blocks
-    "tsmixer_down_sampling_layers": 3,    # multi-scale levels (seq_len / 2^k per level)
-    "tsmixer_down_sampling_window": 2,    # pooling stride per downsampling step
-    "tsmixer_down_sampling_method": "avg",  # "avg" | "max"
-    "tsmixer_decomp_method":        "moving_avg",
-    "tsmixer_moving_avg":           25,   # moving-average kernel size (must be odd)
-    "tsmixer_top_k":                5,    # DFT top-k components (only for decomp_method='dft_decomp')
+    # ── Backbone: TimesNet (channel-independent, variable-length) ─────────────
+    # Each variate is processed independently (1 -> d_model embedding), so a
+    # univariate-pretrained backbone transfers to any channel count downstream.
+    # The block is length-agnostic, so the same weights handle shorter windows.
+    "timesnet_d_model":             64,   # embedding dim inside the TimesNet backbone
+    "timesnet_d_ff":                64,   # Inception block hidden dim
+    "timesnet_e_layers":            3,    # number of TimesBlocks
+    "timesnet_top_k":               5,    # FFT periods per block (auto-capped for short crops)
+    "timesnet_num_kernels":         6,    # Inception_Block_V1 kernel count
+    "timesnet_embed":               "timeF",
+    "timesnet_freq":                "h",
+    "timesnet_use_norm":            0,    # 0 = no per-instance norm in DINO path (MAE-consistent)
 
     # ── Pretraining data source ───────────────────────────────────────────────
     # pretrain_source: "monash" | "synthetic" | "monash+synthetic" | None (in-domain CSV)

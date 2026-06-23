@@ -9,7 +9,7 @@ import random
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from tsdino_common import util as utils
-from models.ts_mixer_backbone import TSMixerForDINO, TSMixerForecastModel, PatchReconDecoder
+from models.timesnet_backbone import TimesNetForDINO, PatchReconDecoder
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import time
@@ -221,28 +221,30 @@ def train_TS_DINO(args):
 
 
 
-    #------------- Student - Teacher network (TimeMixer backbone) -----------
-    # TSMixer uses raw [B, T, C] — seq_len is the full window, no patching.
+    #------------- Student - Teacher network (TimesNet backbone) -----------
+    # TimesNet uses raw [B, T, C] — seq_len is the full window, no patching.
+    # The backbone is length-agnostic (VarTimesBlock): pretrain at this seq_len,
+    # but it accepts shorter windows downstream (variable-length classification).
     _seq_len = args.num_patches * args.patch_len
-    _tm_kwargs = dict(
+    _tn_kwargs = dict(
         c_in=args.c_in,
-        seq_len=_seq_len,
-        d_model=cfg.get('tsmixer_d_model', 16),
-        e_layers=cfg.get('tsmixer_e_layers', 2),
-        d_ff=cfg.get('tsmixer_d_ff', 32),
+        d_model=cfg.get('timesnet_d_model', 32),
+        e_layers=cfg.get('timesnet_e_layers', 2),
+        d_ff=cfg.get('timesnet_d_ff', 64),
         dropout=args.dropout,
-        patch_len=args.patch_len,
-        down_sampling_layers=cfg.get('tsmixer_down_sampling_layers', 3),
-        down_sampling_window=cfg.get('tsmixer_down_sampling_window', 2),
-        down_sampling_method=cfg.get('tsmixer_down_sampling_method', 'avg'),
-        decomp_method=cfg.get('tsmixer_decomp_method', 'moving_avg'),
-        moving_avg=cfg.get('tsmixer_moving_avg', 25),
-        top_k=cfg.get('tsmixer_top_k', 5),
-        use_norm=cfg.get('tsmixer_use_norm', 1),
-        channel_independence=cfg.get('tsmixer_channel_independence', 1),
+        top_k=cfg.get('timesnet_top_k', 5),
+        num_kernels=cfg.get('timesnet_num_kernels', 6),
+        embed=cfg.get('timesnet_embed', 'timeF'),
+        freq=cfg.get('timesnet_freq', 'h'),
+        seq_len=_seq_len,
+        # DINO path runs WITHOUT per-instance norm (like the TSMixer DINO backbone):
+        # preserves raw amplitude for the contrastive task AND keeps the MAE target
+        # (raw input) consistent with the encoder tokens. Classification reuses the
+        # same (no-norm) backbone for representation parity.
+        use_norm=cfg.get('timesnet_use_norm', 0),
     )
-    student = TSMixerForDINO(**_tm_kwargs)
-    teacher = TSMixerForDINO(**_tm_kwargs)
+    student = TimesNetForDINO(**_tn_kwargs)
+    teacher = TimesNetForDINO(**_tn_kwargs)
     embed_dim = student.d_model
     student = utils.TSMultiCropWrapper(student, DINOHead(
         embed_dim,
@@ -524,7 +526,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 # Block masking: mask contiguous spans of `mlm_block_size` timesteps
                 # (default 8) rather than independent steps, so the model can't
                 # trivially interpolate a masked value from its visible neighbours.
-                # mlm_block_size=1 recovers per-step masking.
+                # mlm_block_size=1 turns this OFF (per-step masking).
                 _blk      = max(1, int(cfg.get('mlm_block_size', 8)))
                 _n_blocks = (_NP + _blk - 1) // _blk
                 _pmask    = (torch.rand(_B, _n_blocks, device=device) < mlm_mask_ratio)

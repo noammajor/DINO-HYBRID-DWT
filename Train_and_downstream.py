@@ -235,6 +235,7 @@ def run_dino(skip_train: bool = False,
              aug_local: str = None,
              mlm_phi: float = None,
              mlm_mode: str = None,
+             mlm_block_size: int = None,
              backbone_type: str = None,
              dwt_wavelet_pool: list = None,
              use_koleo: bool = None,
@@ -250,10 +251,10 @@ def run_dino(skip_train: bool = False,
              tsmixer_e_layers: int = None,
              patch_len: int = None,
              backbone: str = "timemixer"):
-    if backbone not in ("timemixer", "patchtst", "ts2vec"):
-        raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst' or 'ts2vec')")
+    if backbone not in ("timemixer", "patchtst", "ts2vec", "timesnet"):
+        raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst', 'ts2vec' or 'timesnet')")
     root_dir   = Path(__file__).parent
-    _dino_dirs = {"timemixer": "tsdino_timemixer", "patchtst": "tsdino_patchtst", "ts2vec": "tsdino_ts2vec"}
+    _dino_dirs = {"timemixer": "tsdino_timemixer", "patchtst": "tsdino_patchtst", "ts2vec": "tsdino_ts2vec", "timesnet": "tsdino_timesnet"}
     dino_dir   = root_dir / _dino_dirs[backbone]
     shared_dir = root_dir / "shared"
     _add_path(root_dir)          # so `from tsdino_common import …` resolves inside main.py
@@ -270,7 +271,7 @@ def run_dino(skip_train: bool = False,
 
     # Both backbone configs default output_dir to ./checkpoints — keep the patchtst
     # backbone's checkpoints in a separate tree so the two never collide.
-    if backbone in ("patchtst", "ts2vec"):
+    if backbone in ("patchtst", "ts2vec", "timesnet"):
         _od = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
         if Path(_od).name == 'checkpoints':
             dino_cfg['output_dir'] = str(Path(_od).parent / f'checkpoints_{backbone}')
@@ -348,6 +349,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_phi'] = mlm_phi
     if mlm_mode is not None:
         dino_cfg['mlm_mode'] = mlm_mode
+    if mlm_block_size is not None:
+        dino_cfg['mlm_block_size'] = mlm_block_size
     if batch_size is not None:
         dino_cfg['batch_size_per_gpu'] = batch_size
     if backbone_type is not None:
@@ -1655,6 +1658,7 @@ RUNNERS = {
     "dino_timemixer":  functools.partial(run_dino, backbone="timemixer"),
     "dino_patchtst":   functools.partial(run_dino, backbone="patchtst"),
     "dino_ts2vec":     functools.partial(run_dino, backbone="ts2vec"),
+    "dino_timesnet":   functools.partial(run_dino, backbone="timesnet"),
     "patchtst":        run_patchtst,
     "patchtst_random": lambda skip_train=False, pretrain_dataset=None, forecast_dataset=None, classification_dataset=None, anomaly_dataset=None, pretrain_only=False, classification_only=False, pred_lens=None, checkpoints=None, encoder_layers=None, pretrain_source=None, num_patches=None, linear_probe=True, head_type="linear": run_patchtst(skip_train=skip_train, pretrain_dataset=pretrain_dataset, forecast_dataset=forecast_dataset, classification_dataset=classification_dataset, anomaly_dataset=anomaly_dataset, pretrain_only=pretrain_only, classification_only=classification_only, pred_lens=pred_lens, checkpoints=checkpoints, random_encoder=True, encoder_layers=encoder_layers, pretrain_source=pretrain_source, num_patches=num_patches, linear_probe=linear_probe, head_type=head_type),
     "timemixer":       run_timemixer,
@@ -1700,6 +1704,7 @@ def run(model: str,
         aug_local: str = None,
         mlm_phi: float = None,
         mlm_mode: str = None,
+        mlm_block_size: int = None,
         batch_size: int = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
@@ -1813,6 +1818,7 @@ def run(model: str,
     if 'aug_local'             in sig.parameters: kwargs['aug_local']             = aug_local
     if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
+    if 'mlm_block_size'        in sig.parameters: kwargs['mlm_block_size']        = mlm_block_size
     if 'batch_size'            in sig.parameters: kwargs['batch_size']            = batch_size
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
@@ -1916,6 +1922,9 @@ if __name__ == "__main__":
                         help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
     parser.add_argument("--batch_size", type=int,   default=None,
                         help="Override pretrain batch_size_per_gpu (e.g. lower for 21-ch weather)")
+    parser.add_argument("--mlm_block_size", type=int, default=None,
+                        help="MLM/MAE masking granularity: mask contiguous spans of N timesteps "
+                             "(8 = block masking ON; 1 = per-step masking OFF). Overrides config.")
     parser.add_argument("--mlm_mode",   type=str,   default=None,
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth)")
     parser.add_argument("--backbone_type", type=str, default=None,
@@ -1974,6 +1983,7 @@ if __name__ == "__main__":
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
         mlm_mode=args.mlm_mode,
+        mlm_block_size=args.mlm_block_size,
         batch_size=args.batch_size,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
