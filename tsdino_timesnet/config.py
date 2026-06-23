@@ -28,9 +28,9 @@ config = {
     # NOTE: patch_len/num_patches/step_size below are ONLY the data-loader's window
     # arithmetic — TimesNet does NOT patch. window = (num_patches-1)*step + patch_len.
     "patch_len": 16,
-    "step_size": 16,    # (72-1)*16 + 16 = 1152
-    "window_step": 1152, # stride between windows; =window_size for non-overlapping
-    "num_patches": 72,  # → 1152-timestep pretraining window
+    "step_size": 16,    # (110-1)*16 + 16 = 1760
+    "window_step": 1760, # stride between windows; =window_size for non-overlapping
+    "num_patches": 110,  # → 1760-timestep pretraining window (covers UEA max length 1751)
     "n_layers": 4,
     "n_heads": 16,
     "embed_dim": 128,
