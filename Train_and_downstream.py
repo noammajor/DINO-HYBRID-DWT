@@ -248,6 +248,7 @@ def run_dino(skip_train: bool = False,
              lr_forecasting: float = None,
              batch_size: int = None,
              tsmixer_e_layers: int = None,
+             patch_len: int = None,
              backbone: str = "timemixer"):
     if backbone not in ("timemixer", "patchtst", "ts2vec"):
         raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst' or 'ts2vec')")
@@ -306,6 +307,9 @@ def run_dino(skip_train: bool = False,
         dino_cfg['out_dim'] = out_dim
     if tsmixer_e_layers is not None:
         dino_cfg['tsmixer_e_layers'] = tsmixer_e_layers
+    if patch_len is not None:
+        dino_cfg['patch_len'] = patch_len
+        dino_cfg['step_size'] = patch_len   # non-overlapping patches
     if epochs is not None:
         dino_cfg['epochs'] = epochs
     if epochs_forecasting is not None:
@@ -1709,6 +1713,7 @@ def run(model: str,
         window_stride: int = None,
         phi: float = None,
         tsmixer_e_layers: int = None,
+        patch_len: int = None,
         lr_forecasting: float = None):
     """
     Unified entry point. Each run handles ONE task.
@@ -1821,6 +1826,7 @@ def run(model: str,
     if 'window_stride'         in sig.parameters: kwargs['window_stride']         = window_stride
     if 'phi'                   in sig.parameters: kwargs['phi']                   = phi
     if 'tsmixer_e_layers'      in sig.parameters: kwargs['tsmixer_e_layers']      = tsmixer_e_layers
+    if 'patch_len'             in sig.parameters: kwargs['patch_len']             = patch_len
     if 'lr_forecasting'        in sig.parameters: kwargs['lr_forecasting']        = lr_forecasting
     return runner(**kwargs)
 
@@ -1917,6 +1923,9 @@ if __name__ == "__main__":
     parser.add_argument("--tsmixer_e_layers", type=int, default=None,
                         help="TimeMixer/tsmixer backbone depth (PDM blocks). Overrides config tsmixer_e_layers (default 3). "
                              "Must match at pretrain AND forecast/load time.")
+    parser.add_argument("--patch_len", type=int, default=None,
+                        help="Patch size for the PatchTST backbone (also sets stride = non-overlapping). "
+                             "Overrides config patch_len (default 16). Must match at pretrain AND forecast/load time.")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="Wavelet pool for random-per-sample DWT aug (e.g. sym4 sym6 sym8)")
     parser.add_argument("--use_koleo", type=str, default=None,
@@ -1960,6 +1969,7 @@ if __name__ == "__main__":
         ckpt_tag=args.ckpt_tag,
         output_dir=args.output_dir,
         tsmixer_e_layers=args.tsmixer_e_layers,
+        patch_len=args.patch_len,
         aug_global=args.aug_global,
         aug_local=args.aug_local,
         mlm_phi=args.mlm_phi,
