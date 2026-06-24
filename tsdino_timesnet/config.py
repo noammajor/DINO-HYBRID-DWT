@@ -28,9 +28,16 @@ config = {
     # NOTE: patch_len/num_patches/step_size below are ONLY the data-loader's window
     # arithmetic — TimesNet does NOT patch. window = (num_patches-1)*step + patch_len.
     "patch_len": 16,
-    "step_size": 16,    # (110-1)*16 + 16 = 1760
-    "window_step": 1760, # stride between windows; =window_size for non-overlapping
-    "num_patches": 110,  # → 1760-timestep pretraining window (covers UEA max length 1751)
+    "step_size": 16,    # (32-1)*16 + 16 = 512
+    # window_step kept LARGE (1760) on purpose: shrinking the window to 512 while
+    # holding the stride fixed keeps the window COUNT ~unchanged (one 512-window
+    # sampled per 1760 of series), so each iter is ~3.4x cheaper → ~3.4x faster
+    # epoch. The backbone is length-agnostic (VarTimesBlock), so pretraining at
+    # 512 still classifies the full 1751-length UEA sequences with the same weights.
+    # For full data coverage instead of max speed, set window_step=512 (≈3.4x more
+    # windows, ~same epoch time, more gradient steps).
+    "window_step": 1760, # stride between windows
+    "num_patches": 32,   # → 512-timestep pretraining window (was 110 → 1760)
     "n_layers": 4,
     "n_heads": 16,
     "embed_dim": 128,
@@ -77,7 +84,7 @@ config = {
     "freeze_last_layer": 1,
 
     # ── DINO pretraining ──────────────────────────────────────────────────────
-    "epochs": 150,
+    "epochs": 20,
 
     # ── DWT defaults (shared across all dwt_* aug types) ─────────────────────
     #
