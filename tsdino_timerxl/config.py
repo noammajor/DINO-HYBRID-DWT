@@ -25,10 +25,10 @@ config = {
 
     # ── Model architecture ────────────────────────────────────────────────────
     "c_in": 7,          # number of input variables  (9 for UCI HAR)
-    "patch_len": 16,
-    "step_size": 16,    # stride between patches within window; window=32×16=512
-    "window_step": 512, # stride between windows; =window_size for non-overlapping
-    "num_patches": 32,  # window length in patches → 32×16 = 512 timesteps
+    "patch_len": 16,    # patch size 16 (PatchTST-style)
+    "step_size": 16,    # stride between patches within window; window=21×16=336
+    "window_step": 336, # stride between windows; =window_size for non-overlapping
+    "num_patches": 21,  # window length in patches → 21×16 = 336 context
                         # (Timer-XL architecture; our own DINO+MAE training)
     "n_layers": 4,      # Timer-XL e_layers (OpenLTM multivariate pretrain)
     "n_heads": 8,       # Timer-XL n_heads
@@ -40,7 +40,7 @@ config = {
     "drop_path_rate": 0.1,
 
     # ── DINO head ─────────────────────────────────────────────────────────────
-    "out_dim": 1024,
+    "out_dim": 65536,
     "use_bn_in_head": False,
     "norm_last_layer": True,
 
@@ -155,7 +155,7 @@ config = {
     # ── MLM auxiliary branch (iBOT / MAE) — same as TimeMixer backbone ─────────
     # Combined loss: mlm_phi*DINO + (1-mlm_phi)*MLM. mlm_phi=0 disables the branch.
     "mlm_phi":        0.75,        # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
-    "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground-truth patch values
+    "mlm_mode":       "mae",       # "ibot" = teacher-guided CE | "mae" = MSE vs ground-truth patch values
     "ibot_out_dim":   1024,        # iBOT patch head output dim (kept at out_dim by default)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM
 
@@ -184,7 +184,7 @@ config = {
 
     # ── Pretraining data source ───────────────────────────────────────────────
     # pretrain_source: "monash" | "synthetic" | "monash+synthetic"
-    "pretrain_source":    "monash",
+    "pretrain_source":    "synthetic",
 
     # ── Distributed ───────────────────────────────────────────────────────────
     "dist_url": "env://",

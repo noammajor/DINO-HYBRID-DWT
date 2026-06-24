@@ -112,6 +112,9 @@ class TimerXL(nn.Module):
             d_model=d_model, n_heads=n_heads, e_layers=n_layers, d_ff=d_ff,
             dropout=dropout, activation=act, output_attention=False,
             covariate=False, flash_attention=False, use_norm=False,
+            # RoPE cache preallocated large enough for the longest sequences
+            # (e.g. UEA max 1751 → ~110 patches). RoPE also auto-extends at runtime.
+            rope_max_len=kwargs.get("rope_max_len", 4096),
         )
         self.timer = TimerXLModel(_cfg)
         for m in self.timer.modules():          # representation learning → bidirectional

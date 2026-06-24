@@ -732,7 +732,7 @@ def test_run(args):
     utils.init_distributed_mode(args)
 
     # ── PatchTST-identical data loading ──────────────────────────────────────
-    _SEQ_LEN = 512   # 32 patches × 16 = matches the 512 pretraining window
+    _SEQ_LEN = 336   # 21 patches × 16 = matches the 336 pretraining context
     _patchtst_dir = str(Path(__file__).parent.parent / "PatchTST_self_supervised")
     if _patchtst_dir not in sys.path:
         sys.path.insert(0, _patchtst_dir)

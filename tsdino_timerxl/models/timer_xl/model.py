@@ -29,8 +29,9 @@ class Model(nn.Module):
                 TimerLayer(
                     AttentionLayer(
                         TimeAttention(True, attention_dropout=configs.dropout,
-                                    output_attention=self.output_attention, 
+                                    output_attention=self.output_attention,
                                     d_model=configs.d_model, num_heads=configs.n_heads,
+                                    max_len=getattr(configs, 'rope_max_len', 100),
                                     covariate=configs.covariate, flash_attention=configs.flash_attention),
                                     configs.d_model, configs.n_heads),
                     configs.d_model,
