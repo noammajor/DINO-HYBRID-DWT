@@ -361,6 +361,7 @@ def run_dino(skip_train: bool = False,
         dino_cfg['pretrain_subset_frac'] = subset_frac
     if window_stride is not None:
         dino_cfg['window_stride'] = window_stride
+        dino_cfg['window_step']   = window_stride   # tsdino mains read 'window_step' for the arrow puller stride
     if dwt_wavelet_pool is not None:
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
     if use_koleo is not None:

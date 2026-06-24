@@ -26,6 +26,32 @@ import matplotlib.pyplot as plt
 from torch.utils.data import ConcatDataset
 
 
+class RandomSubsetSampler(torch.utils.data.Sampler):
+    """Yield a fresh random `frac` fraction of indices (no replacement) each epoch.
+
+    The DataLoader calls iter(sampler) once per epoch; the training loop calls
+    sampler.set_epoch(epoch), which re-seeds the RNG so a different random subset
+    is drawn every epoch. len() reflects the subset size, so len(data_loader) —
+    and thus the LR/momentum/wd schedules — scale down automatically.
+    """
+    def __init__(self, n, frac, seed=0):
+        self.n = int(n)
+        self.k = max(1, int(frac * self.n))
+        self.seed = int(seed)
+        self.epoch = 0
+
+    def set_epoch(self, epoch):
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        yield from torch.randperm(self.n, generator=g)[:self.k].tolist()
+
+    def __len__(self):
+        return self.k
+
+
 def train_TS_DINO(args):
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
@@ -131,9 +157,21 @@ def train_TS_DINO(args):
         )
 
     _is_distributed = utils.is_dist_avail_and_initialized()
+    # Optional: train on a fresh random fraction of the windows each epoch
+    # (re-randomized via sampler.set_epoch in the loop). len(data_loader) scales
+    # down, so the LR/wd/momentum schedules adjust automatically.
+    _subset_frac = cfg.get('pretrain_subset_frac', 1.0) or 1.0
+    if _subset_frac < 1.0 and not _is_distributed:
+        _train_sampler = RandomSubsetSampler(len(combined_dataset), _subset_frac, seed=args.seed)
+        print(f"[subset] each epoch draws {_subset_frac:.2%} of {len(combined_dataset)} "
+              f"windows ({len(_train_sampler)} per epoch, re-randomized each epoch)")
+    elif _is_distributed:
+        _train_sampler = torch.utils.data.distributed.DistributedSampler(combined_dataset, shuffle=True)
+    else:
+        _train_sampler = torch.utils.data.RandomSampler(combined_dataset)
     data_loader = torch.utils.data.DataLoader(
         combined_dataset,
-        sampler=torch.utils.data.distributed.DistributedSampler(combined_dataset, shuffle=True) if _is_distributed else torch.utils.data.RandomSampler(combined_dataset),
+        sampler=_train_sampler,
         batch_size=args.batch_size_per_gpu,
         num_workers=args.num_workers,
         pin_memory=True,
