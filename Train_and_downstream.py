@@ -227,6 +227,8 @@ def run_dino(skip_train: bool = False,
              output_dir: str = None,
              embed_dim: int = None,
              out_dim: int = None,
+             d_ff: int = None,
+             n_heads: int = None,
              epochs: int = None,
              epochs_forecasting: int = None,
              warmup_epochs: int = None,
@@ -306,6 +308,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['embed_dim'] = embed_dim
     if out_dim is not None:
         dino_cfg['out_dim'] = out_dim
+    if d_ff is not None:
+        dino_cfg['d_ff'] = d_ff
+    if n_heads is not None:
+        dino_cfg['n_heads'] = n_heads
     if tsmixer_e_layers is not None:
         dino_cfg['tsmixer_e_layers'] = tsmixer_e_layers
     if patch_len is not None:
@@ -1698,6 +1704,8 @@ def run(model: str,
         embed_dim: int = None,
         predictor_embed_dim: int = None,
         out_dim: int = None,
+        d_ff: int = None,
+        n_heads: int = None,
         epochs: int = None,
         epochs_forecasting: int = None,
         warmup_epochs: int = None,
@@ -1811,6 +1819,8 @@ def run(model: str,
     if 'embed_dim'              in sig.parameters: kwargs['embed_dim']              = embed_dim
     if 'predictor_embed_dim'   in sig.parameters: kwargs['predictor_embed_dim']   = predictor_embed_dim
     if 'out_dim'               in sig.parameters: kwargs['out_dim']               = out_dim
+    if 'd_ff'                  in sig.parameters: kwargs['d_ff']                  = d_ff
+    if 'n_heads'               in sig.parameters: kwargs['n_heads']               = n_heads
     if 'epochs'                in sig.parameters: kwargs['epochs']                = epochs
     if 'epochs'                in sig.parameters: kwargs['epochs']                = epochs
     if 'epochs_forecasting'    in sig.parameters: kwargs['epochs_forecasting']    = epochs_forecasting
@@ -1894,6 +1904,10 @@ if __name__ == "__main__":
                         help="Override predictor embedding dim (JEPA only)")
     parser.add_argument("--out_dim",             type=int, default=None,
                         help="Override DINO output bins (out_dim / prototype count)")
+    parser.add_argument("--d_ff",                type=int, default=None,
+                        help="Override feed-forward dim d_ff for the encoder")
+    parser.add_argument("--n_heads",             type=int, default=None,
+                        help="Override number of attention heads")
     parser.add_argument("--lr_pred",             type=float, default=None,
                         help="Override predictor learning rate (JEPA only)")
     parser.add_argument("--epochs",              type=int, default=None,
@@ -1974,6 +1988,8 @@ if __name__ == "__main__":
         embed_dim=args.embed_dim,
         predictor_embed_dim=args.predictor_embed_dim,
         out_dim=args.out_dim,
+        d_ff=args.d_ff,
+        n_heads=args.n_heads,
         epochs=args.epochs,
         epochs_forecasting=args.epochs_forecasting,
         warmup_epochs=args.warmup_epochs,
