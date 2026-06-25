@@ -33,10 +33,10 @@ fam_flags () {
 # the config default. Tune if you hit OOM / want to fill the GPU more.
 batch_flags () {
   case "$1" in
-    traffic)     echo "--batch_size 2"  ;;  # 862 ch
-    electricity) echo "--batch_size 4"  ;;  # 321 ch
-    weather)     echo "--batch_size 32" ;;  # 21 ch
-    *)           echo "" ;;                 # ETT* (7 ch) → config default (128)
+    traffic)     echo "--batch_size 128" ;;  # 862 ch
+    electricity) echo "--batch_size 128" ;;  # 321 ch
+    weather)     echo "--batch_size 128" ;;  # 21 ch
+    *)           echo "" ;;                   # ETT* (7 ch) → config default (128)
   esac
 }
 

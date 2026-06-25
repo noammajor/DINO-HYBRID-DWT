@@ -20,7 +20,7 @@ config = {
     "data_path_forecast_training": "data/ETTh1.csv",
     "data_path_forecast_test": "data/ETTh1.csv",
     "data_path_classification": "UCI HAR Dataset",
-    "num_workers": 6,
+    "num_workers": 16,   # DWT augmentation is CPU-bound; more workers feed the GPU
     "batch_size_per_gpu": 128,
 
     # ── Model architecture ────────────────────────────────────────────────────
