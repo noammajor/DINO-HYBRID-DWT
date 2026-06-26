@@ -1877,6 +1877,12 @@ if __name__ == "__main__":
         choices=["true", "false"],
         help="Run pretraining only, skip downstream evaluation (true | false)",
     )
+    parser.add_argument(
+        "--linear_probe", type=str, default="true",
+        choices=["true", "false"],
+        help="Forecast head mode: true = linear probe (backbone FROZEN), "
+             "false = fine-tune the full backbone end-to-end on the target.",
+    )
     parser.add_argument("--task", type=str, default=None,
                         choices=["pretrain", "forecast", "classify", "anomaly"],
                         help="Task to run: pretrain | forecast | classify. "
@@ -2016,4 +2022,5 @@ if __name__ == "__main__":
         checkpoints=[int(c) if c.isdigit() else c for c in args.checkpoints] if args.checkpoints else None,
         seed=args.seed,
         pretrain_cls_model=args.pretrain_cls_model.lower() == "true",
+        linear_probe=args.linear_probe.lower() == "true",
         head_type=args.head)
