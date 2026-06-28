@@ -18,7 +18,7 @@ GPU="${GPU:-7}"
 
 # ── knobs (match config_timemixer.py / this repo's TimeMixer setup) ───────────
 SEQ_LEN="${SEQ_LEN:-336}"
-PRED_LEN="${PRED_LEN:-96}"
+PRED_LENS="${PRED_LENS:-96 192 336 720}"   # sweep all 4 horizons (TimeMixer default)
 E_LAYERS="${E_LAYERS:-2}"
 D_MODEL="${D_MODEL:-128}"
 D_FF="${D_FF:-256}"
@@ -45,7 +45,7 @@ if [ -n "${TM_DATASETS:-}" ]; then
 fi
 
 [ -d "$DATA_DIR" ] || { echo "DATA_DIR not found: $DATA_DIR" >&2; exit 1; }
-echo "data=$DATA_DIR  gpu=$GPU  seq=$SEQ_LEN  pred=$PRED_LEN  lr=$LR  epochs=$EPOCHS"
+echo "data=$DATA_DIR  gpu=$GPU  seq=$SEQ_LEN  pred=[$PRED_LENS]  lr=$LR  epochs=$EPOCHS"
 
 for entry in "${DATASETS[@]}"; do
   read -r name csv <<< "$entry"
@@ -63,21 +63,23 @@ PY
 )"
 
   log="$REPO/logs/timemixer_baseline/$name"; mkdir -p "$log"
-  echo "[gpu$GPU|$name] c_in=$CIN target=$TARGET -> $log/run.log"
-  CUDA_VISIBLE_DEVICES=$GPU python -u "$TM/run.py" \
-    --task_name long_term_forecast --is_training 1 \
-    --model TimeMixer --data custom \
-    --root_path "$DATA_DIR/" --data_path "$csv" \
-    --model_id "${name}_${SEQ_LEN}_${PRED_LEN}" \
-    --features M --target "$TARGET" \
-    --seq_len $SEQ_LEN --label_len 0 --pred_len $PRED_LEN \
-    --enc_in $CIN --dec_in $CIN --c_out $CIN \
-    --e_layers $E_LAYERS --d_model $D_MODEL --d_ff $D_FF \
-    --down_sampling_layers $DS_LAYERS --down_sampling_window $DS_WINDOW \
-    --down_sampling_method avg \
-    --learning_rate $LR --train_epochs $EPOCHS --patience 10 --batch_size $BATCH \
-    --des Exp --itr 1 --gpu 0 \
-    > "$log/run.log" 2>&1
-  echo "[gpu$GPU|$name] DONE  (test MSE/MAE at tail of $log/run.log)"
+  for PRED_LEN in $PRED_LENS; do
+    echo "[gpu$GPU|$name|pl$PRED_LEN] c_in=$CIN target=$TARGET -> $log/pred${PRED_LEN}.log"
+    CUDA_VISIBLE_DEVICES=$GPU python -u "$TM/run.py" \
+      --task_name long_term_forecast --is_training 1 \
+      --model TimeMixer --data custom \
+      --root_path "$DATA_DIR/" --data_path "$csv" \
+      --model_id "${name}_${SEQ_LEN}_${PRED_LEN}" \
+      --features M --target "$TARGET" \
+      --seq_len $SEQ_LEN --label_len 0 --pred_len $PRED_LEN \
+      --enc_in $CIN --dec_in $CIN --c_out $CIN \
+      --e_layers $E_LAYERS --d_model $D_MODEL --d_ff $D_FF \
+      --down_sampling_layers $DS_LAYERS --down_sampling_window $DS_WINDOW \
+      --down_sampling_method avg \
+      --learning_rate $LR --train_epochs $EPOCHS --patience 10 --batch_size $BATCH \
+      --des Exp --itr 1 --gpu 0 \
+      > "$log/pred${PRED_LEN}.log" 2>&1
+    echo "[gpu$GPU|$name|pl$PRED_LEN] DONE  (test MSE/MAE at tail of $log/pred${PRED_LEN}.log)"
+  done
 done
 echo "ALL DONE — metrics in logs/timemixer_baseline/<dataset>/run.log"
