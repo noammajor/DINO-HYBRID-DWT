@@ -102,6 +102,32 @@ DATASETS: dict = {
         "timestamp_col": "date",
         "columns": None,
     },
+
+    # ── Already wide-format (date, OT, var...); no conversion needed ──────────────
+    "czelan": {
+        "csv_filename":  "CzeLan.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "zafnoo": {
+        "csv_filename":  "ZafNoo.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "pm2_5": {
+        "csv_filename":  "pm2_5.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "temp": {
+        "csv_filename":  "temp.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
 }
 
 

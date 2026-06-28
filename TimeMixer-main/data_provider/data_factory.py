@@ -74,6 +74,12 @@ def data_provider(args, flag):
     else:
         if args.data == 'm4':
             drop_last = False
+        # Never drop the last batch for val/test: on short datasets (e.g. Exchange
+        # at pred_len=720) the val split can hold fewer windows than one batch, so
+        # drop_last=True empties the loader -> Vali Loss=nan and broken model
+        # selection. Only the train loader keeps drop_last for step stability.
+        if flag != 'train':
+            drop_last = False
         data_set = Data(
             root_path=args.root_path,
             data_path=args.data_path,
