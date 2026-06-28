@@ -64,6 +64,44 @@ DATASETS: dict = {
         "timestamp_col": "date",
         "columns": None,  # auto-detected from CSV header
     },
+
+    # ── Long-format datasets, converted to wide via tools/convert_long_to_wide.py ──
+    "exchange": {
+        "csv_filename":  "Exchange.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,  # auto-detected from CSV header
+    },
+    "wind": {
+        "csv_filename":  "Wind.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "solar": {
+        "csv_filename":  "Solar.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "metr_la": {
+        "csv_filename":  "METR-LA.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "aqwan": {
+        "csv_filename":  "AQWan.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
+    "aqshunyi": {
+        "csv_filename":  "AQShunyi.csv",
+        "patchtst_cls":  "Custom",
+        "timestamp_col": "date",
+        "columns": None,
+    },
 }
 
 
