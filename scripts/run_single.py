@@ -27,6 +27,7 @@ ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
 IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather",
+                      "electricity", "traffic",
                       "exchange", "wind", "solar", "metr_la", "aqwan", "aqshunyi",
                       "czelan", "zafnoo", "pm2_5", "temp"]
 ALL_MODELS         = ["dino_timemixer", "dino_patchtst", "patchtst",
@@ -114,6 +115,8 @@ def main():
                         help="Checkpoint epochs to evaluate during forecasting, e.g. --checkpoints 1 3 5 10")
     parser.add_argument("--lr",       type=float, default=None,
                         help="Pretraining LR (default: model-specific)")
+    parser.add_argument("--batch_size", type=int, default=None,
+                        help="Pretrain batch size override (per-run; e.g. small for high-channel datasets)")
     parser.add_argument("--warmup_epochs", type=int, default=None,
                         help="Number of LR warmup epochs (DINO only)")
     parser.add_argument("--ckpt_tag", type=str, default=None,
@@ -169,6 +172,8 @@ def main():
         base_cmd += ["--encoder_layers", str(args.layers)]
     if args.embed_dim:
         base_cmd += ["--embed_dim", str(args.embed_dim)]
+    if args.batch_size:
+        base_cmd += ["--batch_size", str(args.batch_size)]
     if args.out_dim:
         base_cmd += ["--out_dim", str(args.out_dim)]
     if args.epochs:

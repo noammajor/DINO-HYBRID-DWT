@@ -626,7 +626,8 @@ def run_patchtst(skip_train: bool = False, pretrain_dataset: str = None, forecas
                  checkpoints=None, random_encoder: bool = False, encoder_layers: int = None,
                  predictor_layers: int = None, lr: float = None, pretrain_source: str = None,
                  num_patches: int = None, seed: int = None, linear_probe: bool = True,
-                 head_type: str = "linear", embed_dim: int = None, epochs: int = None):
+                 head_type: str = "linear", embed_dim: int = None, epochs: int = None,
+                 batch_size: int = None):
     if pred_lens is None:
         pred_lens = [96, 192, 336, 720]
     patchtst_dir = Path(__file__).parent / "PatchTST_self_supervised"
@@ -639,6 +640,8 @@ def run_patchtst(skip_train: bool = False, pretrain_dataset: str = None, forecas
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     cfg = {**DATA_PATHS, **dict(_mod.config)}
+    if batch_size is not None:
+        cfg['batch_size'] = batch_size          # per-run pretrain batch override
     if pretrain_source is not None:
         cfg['pretrain_source'] = pretrain_source
     elif pretrain_dataset is not None and pretrain_dataset not in ('monash', 'synthetic', 'monash+synthetic'):
