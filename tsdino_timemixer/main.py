@@ -990,7 +990,10 @@ def test_run(args):
     print(f"  [DINO forecast] loss={_loss_name}")
     _lp_fore  = getattr(args, 'linear_probe', True)
     _head_lr_fore = float(args.lr_forecasting)
-    _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore)
+    # Backbone (encoder) LR for fine-tune: defaults to the head LR, scaled by
+    # TS_FORECAST_ENC_LR_SCALE (e.g. 0.1 = backbone trains 10x slower than head).
+    _enc_lr_scale = float(os.environ.get("TS_FORECAST_ENC_LR_SCALE", "1.0"))
+    _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore) * _enc_lr_scale
     _opt_name = os.environ.get("TS_FORECAST_OPT", "adam").lower()
     _fc_wd = float(os.environ.get("TS_FORECAST_WD", "1e-4"))   # forecast weight decay
     print(f"  [DINO forecast] weight_decay={_fc_wd}")
