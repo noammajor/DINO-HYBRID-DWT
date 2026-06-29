@@ -1925,6 +1925,8 @@ if __name__ == "__main__":
                         help="Override number of forecasting fine-tune epochs (DINO)")
     parser.add_argument("--checkpoints", nargs="+", default=None,
                         help="Checkpoint epochs to evaluate during forecasting, e.g. --checkpoints 1 3 5 10 best")
+    parser.add_argument("--pred_lens", nargs="+", type=int, default=None,
+                        help="Forecast horizons to run, e.g. --pred_lens 96 (default: 96 192 336 720)")
     parser.add_argument("--seed",             type=int,   default=None,
                         help="Random seed (also suffixes checkpoint paths with _seedN)")
     parser.add_argument("--pretrain_cls_model", type=str, default="false",
@@ -1981,6 +1983,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     run(model=args.model,
         task=args.task,
+        pred_lens=args.pred_lens,
         skip_train=args.skip_train.lower() == "true",
         pretrain_dataset=args.pretrain_dataset,
         forecast_dataset=args.forecast_dataset,

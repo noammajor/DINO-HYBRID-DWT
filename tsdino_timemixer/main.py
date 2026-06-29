@@ -984,12 +984,14 @@ def test_run(args):
     _head_lr_fore = float(args.lr_forecasting)
     _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore)
     _opt_name = os.environ.get("TS_FORECAST_OPT", "adam").lower()
+    _fc_wd = float(os.environ.get("TS_FORECAST_WD", "1e-4"))   # forecast weight decay
+    print(f"  [DINO forecast] weight_decay={_fc_wd}")
     if _opt_name == "prodigy":
         try:
             from prodigyopt import Prodigy
             _pparams = (model.head.parameters() if _lp_fore else model.parameters())
             _dcoef = float(os.environ.get("TS_PRODIGY_DCOEF", "1.0"))
-            optimizer = Prodigy(_pparams, lr=1.0, d_coef=_dcoef, weight_decay=1e-4,
+            optimizer = Prodigy(_pparams, lr=1.0, d_coef=_dcoef, weight_decay=_fc_wd,
                                 safeguard_warmup=True, use_bias_correction=True,
                                 decouple=True)
             print(f"  [DINO forecast] optimizer: Prodigy (lr-free, d_coef={_dcoef})")
@@ -998,15 +1000,28 @@ def test_run(args):
                   "(`pip install prodigyopt`) — falling back to Adam.")
             _opt_name = "adam"
     if _opt_name != "prodigy":
+        _mom = float(os.environ.get("TS_FORECAST_MOMENTUM", "0.9"))
         if _lp_fore:
-            optimizer = torch.optim.Adam(model.head.parameters(),
-                                         lr=_head_lr_fore, weight_decay=1e-4)
+            _p = model.head.parameters()
+            if _opt_name == "adamw":
+                optimizer = torch.optim.AdamW(_p, lr=_head_lr_fore, weight_decay=_fc_wd)
+            elif _opt_name == "sgd":
+                optimizer = torch.optim.SGD(_p, lr=_head_lr_fore, momentum=_mom, weight_decay=_fc_wd)
+            else:
+                optimizer = torch.optim.Adam(_p, lr=_head_lr_fore, weight_decay=_fc_wd)
         else:
-            optimizer = torch.optim.Adam([
+            _g = [
                 {"params": model.head.parameters(),     "lr": _head_lr_fore},
                 {"params": model.backbone.parameters(), "lr": _enc_lr},
-            ], weight_decay=1e-4)
+            ]
+            if _opt_name == "adamw":
+                optimizer = torch.optim.AdamW(_g, weight_decay=_fc_wd)
+            elif _opt_name == "sgd":
+                optimizer = torch.optim.SGD(_g, momentum=_mom, weight_decay=_fc_wd)
+            else:
+                optimizer = torch.optim.Adam(_g, weight_decay=_fc_wd)
             print(f"  [DINO forecast] head_lr={_head_lr_fore}  encoder_lr={_enc_lr}")
+        print(f"  [DINO forecast] optimizer: {_opt_name} (mom={_mom if _opt_name=='sgd' else 'n/a'})")
     model = model.to(device)
     if args.path_num != 0:
         if args.path_num == "best":
