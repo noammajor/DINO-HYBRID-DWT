@@ -859,10 +859,17 @@ def _lr_find_forecast(model, criterion, loader, device,
     lrs    = finder.history["lr"]
     losses = finder.history["loss"]
     finder.reset()                      # restore model weights/state
-    grads = _np.gradient(_np.array(losses))
-    best  = float(lrs[int(_np.nanargmin(grads))])
-    print(f"  [DINO forecast][lr-finder] suggested lr ≈ {best:.3e} "
-          f"(scanned {len(lrs)} pts, {lrs[0]:.1e}→{lrs[-1]:.1e})")
+    # Robust pick for a (near-convex) linear probe: LR at the loss minimum backed
+    # off by a divisor — lands in the steep-descent zone. The steepest-gradient
+    # heuristic mis-fires here (picks a uselessly tiny LR → undertraining).
+    losses  = _np.array(losses)
+    div     = float(os.environ.get("TS_LR_FIND_DIV", 10.0))
+    min_idx = int(_np.argmin(losses))
+    lr_min  = float(lrs[min_idx])
+    best    = lr_min / div
+    print(f"  [DINO forecast][lr-finder] min-loss lr={lr_min:.2e} → "
+          f"suggested lr ≈ {best:.3e} (÷{div:g}; scanned {len(lrs)} pts, "
+          f"{lrs[0]:.1e}→{lrs[-1]:.1e})")
     return best
 
 
@@ -956,15 +963,29 @@ def test_run(args):
     _lp_fore  = getattr(args, 'linear_probe', True)
     _head_lr_fore = float(args.lr_forecasting)
     _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore)
-    if _lp_fore:
-        optimizer = torch.optim.Adam(model.head.parameters(),
-                                     lr=_head_lr_fore, weight_decay=1e-4)
-    else:
-        optimizer = torch.optim.Adam([
-            {"params": model.head.parameters(),     "lr": _head_lr_fore},
-            {"params": model.backbone.parameters(), "lr": _enc_lr},
-        ], weight_decay=1e-4)
-        print(f"  [DINO forecast] head_lr={_head_lr_fore}  encoder_lr={_enc_lr}")
+    _opt_name = os.environ.get("TS_FORECAST_OPT", "adam").lower()
+    if _opt_name == "prodigy":
+        try:
+            from prodigyopt import Prodigy
+            _pparams = (model.head.parameters() if _lp_fore else model.parameters())
+            optimizer = Prodigy(_pparams, lr=1.0, weight_decay=1e-4,
+                                safeguard_warmup=True, use_bias_correction=True,
+                                decouple=True)
+            print("  [DINO forecast] optimizer: Prodigy (learning-rate-free, lr=1.0)")
+        except ImportError:
+            print("  [DINO forecast] prodigyopt not installed "
+                  "(`pip install prodigyopt`) — falling back to Adam.")
+            _opt_name = "adam"
+    if _opt_name != "prodigy":
+        if _lp_fore:
+            optimizer = torch.optim.Adam(model.head.parameters(),
+                                         lr=_head_lr_fore, weight_decay=1e-4)
+        else:
+            optimizer = torch.optim.Adam([
+                {"params": model.head.parameters(),     "lr": _head_lr_fore},
+                {"params": model.backbone.parameters(), "lr": _enc_lr},
+            ], weight_decay=1e-4)
+            print(f"  [DINO forecast] head_lr={_head_lr_fore}  encoder_lr={_enc_lr}")
     model = model.to(device)
     if args.path_num != 0:
         if args.path_num == "best":
@@ -997,11 +1018,16 @@ def test_run(args):
             print(f"  Missing: {missing}")
             print(f"  Missing (new head): {len(missing)}  |  Unexpected (DINO head): {len(unexpected)}")
 
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr_forecasting,
-        total_steps=args.epochs_forecasting * len(data_loader_forecasting_train),
-        pct_start=0.3, anneal_strategy='cos',
-    )
+    _total_steps = args.epochs_forecasting * len(data_loader_forecasting_train)
+    if _opt_name == "prodigy":
+        # Prodigy estimates the LR itself; cosine-anneal its multiplier toward 0.
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=_total_steps)
+    else:
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=args.lr_forecasting,
+            total_steps=_total_steps,
+            pct_start=0.3, anneal_strategy='cos',
+        )
     if _lp_fore:
         for param in model.backbone.parameters():
             param.requires_grad = False
@@ -1014,8 +1040,8 @@ def test_run(args):
         print(f"  [DINO forecast] MODE: full fine-tuning — backbone UNFROZEN")
         print(f"  Trainable: {_total:,} / {_total:,} params")
 
-    # ── optional LR range-test (opt-in: TS_FORECAST_LR_FIND=1) ────────────────
-    if os.environ.get("TS_FORECAST_LR_FIND") == "1":
+    # ── optional LR range-test (opt-in: TS_FORECAST_LR_FIND=1; N/A for Prodigy) ──
+    if os.environ.get("TS_FORECAST_LR_FIND") == "1" and _opt_name != "prodigy":
         _best_lr = _lr_find_forecast(
             model, criterion, data_loader_forecasting_train, device,
             end_lr=float(os.environ.get("TS_LR_FIND_END", 1.0)),
