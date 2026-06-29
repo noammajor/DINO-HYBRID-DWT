@@ -19,9 +19,26 @@ from src.data.datamodule import DataLoaders
 from src.data.pred_dataset import *
 
 DSETS = ['ettm1', 'ettm2', 'etth1', 'etth2', 'electricity',
-         'traffic', 'illness', 'weather', 'exchange', 'monash',
+         'traffic', 'illness', 'weather', 'monash',
          'synthetic', 'monash+synthetic',
+         'exchange', 'wind', 'solar', 'metr_la',
+         'aqshunyi', 'aqwan', 'czelan', 'zafnoo', 'pm2_5', 'temp',
         ]
+
+# Extra wide-format CSVs in the central forecasting dir, loaded via Dataset_Custom.
+# Matches the keys/filenames in dataset_registry.py.
+_EXTRA_CUSTOM = {
+    'exchange': 'Exchange.csv',
+    'wind':     'Wind.csv',
+    'solar':    'Solar.csv',
+    'metr_la':  'METR-LA.csv',
+    'aqshunyi': 'AQShunyi.csv',
+    'aqwan':    'AQWan.csv',
+    'czelan':   'CzeLan.csv',
+    'zafnoo':   'ZafNoo.csv',
+    'pm2_5':    'pm2_5.csv',
+    'temp':     'temp.csv',
+}
 
 
 # ── Monash .tsf reader ────────────────────────────────────────────────────────
@@ -332,14 +349,14 @@ def get_dls(params):
                 workers=params.num_workers,
                 )
 
-    elif params.dset == 'exchange':
-        root_path = '/data/datasets/public/exchange_rate/'
+    elif params.dset in _EXTRA_CUSTOM:
+        root_path = _ETT_DATA_DIR
         size = [params.context_points, 0, params.target_points]
         dls = DataLoaders(
                 datasetCls=Dataset_Custom,
                 dataset_kwargs={
                 'root_path': root_path,
-                'data_path': 'exchange_rate.csv',
+                'data_path': _EXTRA_CUSTOM[params.dset],
                 'features': params.features,
                 'scale': True,
                 'size': size,
@@ -348,6 +365,7 @@ def get_dls(params):
                 batch_size=params.batch_size,
                 workers=params.num_workers,
                 )
+
     elif params.dset == 'monash':
         data_dir = params.monash_data_dir
         min_len  = getattr(params, 'monash_min_len', 512)
