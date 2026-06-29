@@ -980,7 +980,14 @@ def test_run(args):
         multi_scale=_multi_scale,
     )
     print(f"  [DINO forecast] head_dropout={_head_drop}  multi_scale={_multi_scale}")
-    criterion = nn.MSELoss()
+    _loss_name = os.environ.get("TS_FORECAST_LOSS", "mse").lower()
+    if _loss_name == "l1":
+        criterion = nn.L1Loss()
+    elif _loss_name == "huber":
+        criterion = nn.HuberLoss(delta=float(os.environ.get("TS_FORECAST_HUBER_DELTA", "1.0")))
+    else:
+        criterion = nn.MSELoss()
+    print(f"  [DINO forecast] loss={_loss_name}")
     _lp_fore  = getattr(args, 'linear_probe', True)
     _head_lr_fore = float(args.lr_forecasting)
     _enc_lr       = float(getattr(args, 'lr_forecasting_encoder', None) or _head_lr_fore)
@@ -1035,8 +1042,10 @@ def test_run(args):
         else:
             checkpoint = torch.load(path, weights_only=False, map_location=device)
 
-            # Use teacher (EMA) weights — better representations than student for downstream.
-            state_dict = checkpoint['teacher']
+            # Teacher (EMA) by default; TS_FORECAST_USE_STUDENT=1 loads the student instead.
+            _src_key = "student" if os.environ.get("TS_FORECAST_USE_STUDENT", "0") == "1" else "teacher"
+            state_dict = checkpoint[_src_key]
+            print(f"  [DINO forecast] loading {_src_key} backbone weights")
             new_state_dict = {}
             model_state = model.state_dict()
 
