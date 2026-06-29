@@ -971,13 +971,15 @@ def test_run(args):
         channel_independence=getattr(args, 'tsmixer_channel_independence', 1),
     )
     _head_drop = float(os.environ.get("TS_FORECAST_HEAD_DROPOUT", "0.0"))  # opt-in; 0 = off
+    _multi_scale = os.environ.get("TS_FORECAST_MULTISCALE", "0") == "1"
     model = TSMixerForecastModel(
         backbone=TSMixerForDINO(**_tm_kwargs),
         pred_len=args.pred_len,
         use_revin=getattr(args, 'tsmixer_use_revin', os.environ.get('LMC_NO_REVIN') != '1'),
         head_dropout=_head_drop,
+        multi_scale=_multi_scale,
     )
-    print(f"  [DINO forecast] head_dropout={_head_drop}")
+    print(f"  [DINO forecast] head_dropout={_head_drop}  multi_scale={_multi_scale}")
     criterion = nn.MSELoss()
     _lp_fore  = getattr(args, 'linear_probe', True)
     _head_lr_fore = float(args.lr_forecasting)

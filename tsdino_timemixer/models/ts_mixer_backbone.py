@@ -305,24 +305,42 @@ class TSMixerForecastModel(nn.Module):
     """
 
     def __init__(self, backbone: TSMixerForDINO, pred_len: int, use_revin: bool = True,
-                 head_dropout: float = 0.0):
+                 head_dropout: float = 0.0, multi_scale: bool = False):
         super().__init__()
-        self.backbone  = backbone
-        self.pred_len  = pred_len
-        self.use_revin = use_revin
+        self.backbone    = backbone
+        self.pred_len    = pred_len
+        self.use_revin   = use_revin
+        self.multi_scale = multi_scale
         self.dropout = nn.Dropout(head_dropout)   # regularize flattened features before head
-        self.head = nn.Linear(backbone.seq_len * backbone.d_model, pred_len)
+        if multi_scale:
+            # One flatten→Linear head per backbone scale; predictions summed across
+            # scales (TimeMixer-style multi-resolution). Scale lengths are discovered
+            # via a dummy forward. `self.head` stays a single attribute (ModuleList) so
+            # model.head.parameters() works unchanged downstream.
+            with torch.no_grad():
+                _dummy = torch.zeros(1, backbone.seq_len, 1)
+                _enc   = backbone._embed_and_mix(
+                    backbone._multi_scale_process(_dummy, normalize=False))
+            self.head = nn.ModuleList([
+                nn.Linear(e.shape[1] * e.shape[2], pred_len) for e in _enc
+            ])
+        else:
+            self.head = nn.Linear(backbone.seq_len * backbone.d_model, pred_len)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, T, C]  →  [B, pred_len, C]"""
         B, T, C = x.shape
         x_list = self.backbone._multi_scale_process(x, normalize=self.use_revin)
         enc    = self.backbone._embed_and_mix(x_list)
-        finest = enc[0]                                      # [B*C, T, d_model]
-        flat   = finest.reshape(B * C, -1)                   # [B*C, T*d_model]
-        flat   = self.dropout(flat)                          # head dropout (no-op if p=0)
-        pred   = self.head(flat)                             # [B*C, pred_len]
-        pred   = pred.reshape(B, C, -1).permute(0, 2, 1)    # [B, pred_len, C]
+        if self.multi_scale:
+            pred = None
+            for e, h in zip(enc, self.head):                 # each e: [B*C, T_i, d_model]
+                p = h(self.dropout(e.reshape(e.shape[0], -1)))
+                pred = p if pred is None else pred + p        # sum across scales
+        else:
+            flat = self.dropout(enc[0].reshape(B * C, -1))   # finest scale only
+            pred = self.head(flat)
+        pred = pred.reshape(B, C, -1).permute(0, 2, 1)        # [B, pred_len, C]
         if self.use_revin:
             pred = self.backbone.normalize_layers[0](pred, 'denorm')
         return pred
