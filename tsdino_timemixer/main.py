@@ -839,11 +839,12 @@ class DataAugmentationDino:
 
         return crops
 
-def _lr_find_forecast(model, optimizer, criterion, loader, device,
-                      end_lr=1.0, num_iter=100):
-    """torch-lr-finder range test on the forecast head; returns the suggested LR
-    (steepest-descent point). Opt-in via env TS_FORECAST_LR_FIND=1.
-    Restores model+optimizer to their pre-test state before returning."""
+def _lr_find_forecast(model, criterion, loader, device,
+                      start_lr=1e-7, end_lr=1.0, num_iter=100, weight_decay=1e-4):
+    """torch-lr-finder range test on the trainable (forecast) params; returns the
+    suggested LR (steepest-descent point). Opt-in via env TS_FORECAST_LR_FIND=1.
+    Uses a fresh throwaway optimizer so it won't clash with the real OneCycle
+    scheduler; reset() restores model weights before returning."""
     import numpy as _np
     try:
         from torch_lr_finder import LRFinder
@@ -851,11 +852,13 @@ def _lr_find_forecast(model, optimizer, criterion, loader, device,
         print("  [DINO forecast][lr-finder] torch-lr-finder not installed "
               "(`pip install torch-lr-finder`) — skipping, using configured LR.")
         return None
-    finder = LRFinder(model, optimizer, criterion, device=device)
-    finder.range_test(loader, end_lr=end_lr, num_iter=num_iter)
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    tmp_opt = torch.optim.Adam(trainable, lr=start_lr, weight_decay=weight_decay)
+    finder = LRFinder(model, tmp_opt, criterion, device=device)
+    finder.range_test(loader, start_lr=start_lr, end_lr=end_lr, num_iter=num_iter)
     lrs    = finder.history["lr"]
     losses = finder.history["loss"]
-    finder.reset()                      # restore model + optimizer weights/state
+    finder.reset()                      # restore model weights/state
     grads = _np.gradient(_np.array(losses))
     best  = float(lrs[int(_np.nanargmin(grads))])
     print(f"  [DINO forecast][lr-finder] suggested lr ≈ {best:.3e} "
@@ -1014,7 +1017,7 @@ def test_run(args):
     # ── optional LR range-test (opt-in: TS_FORECAST_LR_FIND=1) ────────────────
     if os.environ.get("TS_FORECAST_LR_FIND") == "1":
         _best_lr = _lr_find_forecast(
-            model, optimizer, criterion, data_loader_forecasting_train, device,
+            model, criterion, data_loader_forecasting_train, device,
             end_lr=float(os.environ.get("TS_LR_FIND_END", 1.0)),
             num_iter=int(os.environ.get("TS_LR_FIND_ITERS", 100)),
         )
