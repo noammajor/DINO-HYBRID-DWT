@@ -344,7 +344,21 @@ def train_TS_DINO(args):
         params_groups.append({'params': student_ibot_head.parameters()})
     if use_mlm and student_mae_head is not None:
         params_groups.append({'params': student_mae_head.parameters()})
-    if args.optimizer == "adamw":
+    if os.environ.get("TS_PRETRAIN_OPT", "").lower() == "prodigy":
+        args.optimizer = "prodigy"   # propagates to train_one_epoch (skips manual LR schedule)
+    if args.optimizer == "prodigy":
+        try:
+            from prodigyopt import Prodigy
+            optimizer = Prodigy(params_groups, lr=1.0, weight_decay=0,
+                                safeguard_warmup=True, use_bias_correction=True,
+                                decouple=True)
+            print("[DINO pretrain] optimizer: Prodigy (learning-rate-free, lr=1.0)")
+        except ImportError:
+            print("[DINO pretrain] prodigyopt not installed (`pip install prodigyopt`) "
+                  "— falling back to AdamW.")
+            args.optimizer = "adamw"
+            optimizer = torch.optim.AdamW(params_groups)
+    elif args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)
     elif args.optimizer == "sgd":
         optimizer = torch.optim.SGD(params_groups, lr=0, momentum=0.9)  # lr is set by scheduler
@@ -477,7 +491,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         # update learning rate and weight decay according to their schedule
         it_global = it + epoch * len(data_loader)
         for i, param_group in enumerate(optimizer.param_groups):
-            param_group['lr'] = lr_schedule[it_global]
+            if getattr(args, "optimizer", "adamw") != "prodigy":   # Prodigy adapts its own LR
+                param_group['lr'] = lr_schedule[it_global]
             if i == 0:  # only the first group is regularized
                 param_group['weight_decay'] = wd_schedule[it_global]
         metric_logger.update(lr=optimizer.param_groups[0]['lr'])
