@@ -349,10 +349,11 @@ def train_TS_DINO(args):
     if args.optimizer == "prodigy":
         try:
             from prodigyopt import Prodigy
-            optimizer = Prodigy(params_groups, lr=1.0, weight_decay=0,
+            _dcoef_pre = float(os.environ.get("TS_PRODIGY_DCOEF", "1.0"))
+            optimizer = Prodigy(params_groups, lr=1.0, d_coef=_dcoef_pre, weight_decay=0,
                                 safeguard_warmup=True, use_bias_correction=True,
                                 decouple=True)
-            print("[DINO pretrain] optimizer: Prodigy (learning-rate-free, lr=1.0)")
+            print(f"[DINO pretrain] optimizer: Prodigy (lr-free, d_coef={_dcoef_pre})")
         except ImportError:
             print("[DINO pretrain] prodigyopt not installed (`pip install prodigyopt`) "
                   "— falling back to AdamW.")
@@ -969,11 +970,15 @@ def test_run(args):
         use_norm=getattr(args, 'tsmixer_use_norm', 1),
         channel_independence=getattr(args, 'tsmixer_channel_independence', 1),
     )
+    _head_drop = float(os.environ.get("TS_FORECAST_HEAD_DROPOUT",
+                                      getattr(args, 'head_dropout_forecasting', 0.0)))
     model = TSMixerForecastModel(
         backbone=TSMixerForDINO(**_tm_kwargs),
         pred_len=args.pred_len,
         use_revin=getattr(args, 'tsmixer_use_revin', os.environ.get('LMC_NO_REVIN') != '1'),
+        head_dropout=_head_drop,
     )
+    print(f"  [DINO forecast] head_dropout={_head_drop}")
     criterion = nn.MSELoss()
     _lp_fore  = getattr(args, 'linear_probe', True)
     _head_lr_fore = float(args.lr_forecasting)
@@ -983,10 +988,11 @@ def test_run(args):
         try:
             from prodigyopt import Prodigy
             _pparams = (model.head.parameters() if _lp_fore else model.parameters())
-            optimizer = Prodigy(_pparams, lr=1.0, weight_decay=1e-4,
+            _dcoef = float(os.environ.get("TS_PRODIGY_DCOEF", "1.0"))
+            optimizer = Prodigy(_pparams, lr=1.0, d_coef=_dcoef, weight_decay=1e-4,
                                 safeguard_warmup=True, use_bias_correction=True,
                                 decouple=True)
-            print("  [DINO forecast] optimizer: Prodigy (learning-rate-free, lr=1.0)")
+            print(f"  [DINO forecast] optimizer: Prodigy (lr-free, d_coef={_dcoef})")
         except ImportError:
             print("  [DINO forecast] prodigyopt not installed "
                   "(`pip install prodigyopt`) — falling back to Adam.")
