@@ -839,6 +839,30 @@ class DataAugmentationDino:
 
         return crops
 
+def _lr_find_forecast(model, optimizer, criterion, loader, device,
+                      end_lr=1.0, num_iter=100):
+    """torch-lr-finder range test on the forecast head; returns the suggested LR
+    (steepest-descent point). Opt-in via env TS_FORECAST_LR_FIND=1.
+    Restores model+optimizer to their pre-test state before returning."""
+    import numpy as _np
+    try:
+        from torch_lr_finder import LRFinder
+    except ImportError:
+        print("  [DINO forecast][lr-finder] torch-lr-finder not installed "
+              "(`pip install torch-lr-finder`) — skipping, using configured LR.")
+        return None
+    finder = LRFinder(model, optimizer, criterion, device=device)
+    finder.range_test(loader, end_lr=end_lr, num_iter=num_iter)
+    lrs    = finder.history["lr"]
+    losses = finder.history["loss"]
+    finder.reset()                      # restore model + optimizer weights/state
+    grads = _np.gradient(_np.array(losses))
+    best  = float(lrs[int(_np.nanargmin(grads))])
+    print(f"  [DINO forecast][lr-finder] suggested lr ≈ {best:.3e} "
+          f"(scanned {len(lrs)} pts, {lrs[0]:.1e}→{lrs[-1]:.1e})")
+    return best
+
+
 #----Test run -----
 def test_run(args):
     utils.init_distributed_mode(args)
@@ -986,6 +1010,31 @@ def test_run(args):
         _total = sum(p.numel() for p in model.parameters())
         print(f"  [DINO forecast] MODE: full fine-tuning — backbone UNFROZEN")
         print(f"  Trainable: {_total:,} / {_total:,} params")
+
+    # ── optional LR range-test (opt-in: TS_FORECAST_LR_FIND=1) ────────────────
+    if os.environ.get("TS_FORECAST_LR_FIND") == "1":
+        _best_lr = _lr_find_forecast(
+            model, optimizer, criterion, data_loader_forecasting_train, device,
+            end_lr=float(os.environ.get("TS_LR_FIND_END", 1.0)),
+            num_iter=int(os.environ.get("TS_LR_FIND_ITERS", 100)),
+        )
+        if _best_lr is not None:
+            args.lr_forecasting = _best_lr
+            # rebuild optimizer + OneCycle with the found LR (mirror the branches above)
+            if _lp_fore:
+                optimizer = torch.optim.Adam(model.head.parameters(),
+                                             lr=_best_lr, weight_decay=1e-4)
+            else:
+                optimizer = torch.optim.Adam([
+                    {"params": model.head.parameters(),     "lr": _best_lr},
+                    {"params": model.backbone.parameters(), "lr": _best_lr},
+                ], weight_decay=1e-4)
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer, max_lr=_best_lr,
+                total_steps=args.epochs_forecasting * len(data_loader_forecasting_train),
+                pct_start=0.3, anneal_strategy='cos',
+            )
+            print(f"  [DINO forecast] using lr-finder LR = {_best_lr:.3e}")
 
     best_val_loss_fc = float('inf')
     best_state_fc    = None
