@@ -970,8 +970,7 @@ def test_run(args):
         use_norm=getattr(args, 'tsmixer_use_norm', 1),
         channel_independence=getattr(args, 'tsmixer_channel_independence', 1),
     )
-    _head_drop = float(os.environ.get("TS_FORECAST_HEAD_DROPOUT",
-                                      getattr(args, 'head_dropout_forecasting', 0.0)))
+    _head_drop = float(os.environ.get("TS_FORECAST_HEAD_DROPOUT", "0.0"))  # opt-in; 0 = off
     model = TSMixerForecastModel(
         backbone=TSMixerForDINO(**_tm_kwargs),
         pred_len=args.pred_len,
