@@ -26,7 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 
-IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather"]
+IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather",
+                      "exchange", "wind", "solar", "metr_la", "aqwan", "aqshunyi",
+                      "czelan", "zafnoo", "pm2_5", "temp"]
 ALL_MODELS         = ["dino_timemixer", "dino_patchtst", "patchtst",
                       "timemixer", "autoformer", "fedformer", "dlinear"]
 
