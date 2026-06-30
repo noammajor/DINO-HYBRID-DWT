@@ -218,6 +218,9 @@ def run_dino(skip_train: bool = False,
              pretrain_val_fraction: float = 0.1,
              epochs_classification: int = None,
              cls_head_mode: str = "both",
+             lr_classification: float = None,
+             lr_classification_encoder: float = None,
+             label_smoothing: float = None,
              encoder_layers: int = None,
              predictor_layers: int = None,
              lr: float = None,
@@ -409,15 +412,27 @@ def run_dino(skip_train: bool = False,
         _cls_path = Path(cls_dir) / classification_dataset
         _is_uea   = _cls_path.exists() and bool(list(_cls_path.glob("*_TRAIN.ts")))
 
+        # PULL mode: --checkpoint given → skip SSL, load an existing backbone and
+        # fine-tune on it. The cls window is FIXED to the backbone's pretrain window
+        # (num_patches × patch_len, default 21×16=336) because TSMixer PDM layers are
+        # seq_len-fixed; cls series are padded/truncated to it.
+        _pull = checkpoint is not None
+        _pull_np  = num_patches if num_patches is not None else dino_cfg.get('num_patches', 21)
+        _pull_seq = _pull_np * p_s
+
         if _is_uea:
             _ds_train = UEADataset(str(_cls_path), classification_dataset, split="train")
             _ds_test  = UEADataset(str(_cls_path), classification_dataset, split="test",
                                    _shared=_ds_train)
             n_classes = _ds_train.n_classes
             n_vars    = _ds_train._samples[0].shape[-1]
-            _max_T    = max(s.shape[0] for s in _ds_train._samples + _ds_test._samples)
-            seq_len   = int(np.ceil(_max_T / p_s)) * p_s     # per-dataset window
-            n_patches = seq_len // p_s
+            if _pull:
+                seq_len   = _pull_seq                        # match the pulled backbone
+                n_patches = _pull_np
+            else:
+                _max_T    = max(s.shape[0] for s in _ds_train._samples + _ds_test._samples)
+                seq_len   = int(np.ceil(_max_T / p_s)) * p_s     # per-dataset window
+                n_patches = seq_len // p_s
 
             def _cls_collate(batch, _ps=p_s, _sl=seq_len, _nP=n_patches):
                 xs, ys, orig_lens = zip(*batch)
@@ -437,6 +452,10 @@ def run_dino(skip_train: bool = False,
             cls_test  = torch.utils.data.DataLoader(
                 _ds_test,  batch_size=cls_bs, shuffle=False, collate_fn=_cls_collate)
         else:
+            if _pull:
+                raise NotImplementedError(
+                    "Pull mode (--checkpoint) is wired for UEA .ts datasets only; "
+                    f"'{classification_dataset}' is npy/pt format.")
             _tr = ClassificationDataPuller(cls_dir, classification_dataset, p_s, which="train")
             _te = ClassificationDataPuller(cls_dir, classification_dataset, p_s, which="test")
             n_classes = _tr.n_classes
@@ -454,6 +473,14 @@ def run_dino(skip_train: bool = False,
             # key actually read by TSMixerClassification.classification()
             dino_cfg['epoch_classification']  = epochs_classification
             dino_cfg['epochs_classification'] = epochs_classification
+        # downstream head tuning: discriminative LR + label smoothing + best-epoch select
+        dino_cfg['cls_best_epoch'] = True
+        if lr_classification is not None:
+            dino_cfg['lr_classification'] = lr_classification
+        if lr_classification_encoder is not None:
+            dino_cfg['lr_classification_encoder'] = lr_classification_encoder
+        if label_smoothing is not None:
+            dino_cfg['label_smoothing'] = label_smoothing
         dino_cfg['c_in']        = n_vars
         dino_cfg['seq_len']     = seq_len
         dino_cfg['num_patches'] = n_patches
@@ -472,30 +499,39 @@ def run_dino(skip_train: bool = False,
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
         print("\n" + "=" * 60)
-        print(f"  MODEL: DINO (tsdino_timemixer) — PRETRAIN ON CLASSIFICATION DATA")
+        _mode_hdr = "PULL EXISTING BACKBONE (no pretrain)" if _pull else "PRETRAIN ON CLASSIFICATION DATA"
+        print(f"  MODEL: DINO (tsdino_timemixer) — {_mode_hdr}")
         print(f"  dataset: {classification_dataset}   n_vars={n_vars}  "
               f"n_classes={n_classes}  seq_len={seq_len} ({n_patches}×{p_s})")
-        _n_train = len(cls_train.dataset)
-        _n_val_est = int(round(_n_train * pretrain_val_fraction))
-        _val_note = (f"holdout {_n_val_est} for best-by-val"
-                     if _n_val_est >= 32 else "too small → final-epoch checkpoint")
-        print(f"  pretrain val: frac={pretrain_val_fraction} ({_val_note})")
-        print(f"  output_dir: {args.output_dir}")
+        if _pull:
+            print(f"  backbone: {os.path.abspath(checkpoint)}")
+        else:
+            _n_train = len(cls_train.dataset)
+            _n_val_est = int(round(_n_train * pretrain_val_fraction))
+            _val_note = (f"holdout {_n_val_est} for best-by-val"
+                         if _n_val_est >= 32 else "too small → final-epoch checkpoint")
+            print(f"  pretrain val: frac={pretrain_val_fraction} ({_val_note})")
+            print(f"  output_dir: {args.output_dir}")
         print("=" * 60)
 
-        if not skip_train:
-            print("\n[DINO] Pretraining on classification train series …")
-            dino_main.train_TS_DINO(args)
+        if _pull:
+            _ckpt = os.path.abspath(checkpoint)
+            if not os.path.exists(_ckpt):
+                raise FileNotFoundError(f"--checkpoint not found: {_ckpt}")
+            print(f"\n[DINO] Pull mode — no pretraining; loading backbone {_ckpt}")
         else:
-            print("[DINO] skip_train=True — reusing existing checkpoint.")
-
-        _ckpt = os.path.join(args.output_dir, "checkpoint_best.pth")
-        if not os.path.exists(_ckpt):
-            _epochs_ckpts = sorted(Path(args.output_dir).glob("checkpoint*.pth"))
-            if _epochs_ckpts:
-                _ckpt = str(_epochs_ckpts[-1])
+            if not skip_train:
+                print("\n[DINO] Pretraining on classification train series …")
+                dino_main.train_TS_DINO(args)
             else:
-                raise FileNotFoundError(f"No pretrained checkpoint found in {args.output_dir}")
+                print("[DINO] skip_train=True — reusing existing checkpoint.")
+            _ckpt = os.path.join(args.output_dir, "checkpoint_best.pth")
+            if not os.path.exists(_ckpt):
+                _epochs_ckpts = sorted(Path(args.output_dir).glob("checkpoint*.pth"))
+                if _epochs_ckpts:
+                    _ckpt = str(_epochs_ckpts[-1])
+                else:
+                    raise FileNotFoundError(f"No pretrained checkpoint found in {args.output_dir}")
 
         _tm_cls_spec = _ilu.spec_from_file_location(
             "tsmixer_classification", dino_dir / "TSMixerClassification.py")
@@ -1839,6 +1875,9 @@ def run(model: str,
         pretrain_val_fraction: float = 0.1,
         epochs_classification: int = None,
         cls_head_mode: str = "both",
+        lr_classification: float = None,
+        lr_classification_encoder: float = None,
+        label_smoothing: float = None,
         pred_len: int = None,
         encoder_layers: int = None,
         predictor_layers: int = None,
@@ -1951,6 +1990,9 @@ def run(model: str,
     if 'pretrain_val_fraction' in sig.parameters: kwargs['pretrain_val_fraction'] = pretrain_val_fraction
     if 'epochs_classification' in sig.parameters: kwargs['epochs_classification'] = epochs_classification
     if 'cls_head_mode'         in sig.parameters: kwargs['cls_head_mode']         = cls_head_mode
+    if 'lr_classification'     in sig.parameters: kwargs['lr_classification']     = lr_classification
+    if 'lr_classification_encoder' in sig.parameters: kwargs['lr_classification_encoder'] = lr_classification_encoder
+    if 'label_smoothing'       in sig.parameters: kwargs['label_smoothing']       = label_smoothing
     if 'classification_only'   in sig.parameters: kwargs['classification_only']   = classification_only
     if 'pred_lens'              in sig.parameters: kwargs['pred_lens']              = pred_lens
     if 'checkpoints'            in sig.parameters: kwargs['checkpoints']            = checkpoints
@@ -2050,6 +2092,19 @@ if __name__ == "__main__":
         choices=["both", "fine_tune", "linear_probe"],
         help="Which downstream head(s) to run after classification pretraining: "
              "'both' (probe + fine-tune), 'fine_tune' only, or 'linear_probe' only.",
+    )
+    parser.add_argument(
+        "--lr_classification", type=float, default=None,
+        help="Downstream classification HEAD learning rate (pretrain_on_classification flow).",
+    )
+    parser.add_argument(
+        "--lr_classification_encoder", type=float, default=None,
+        help="Downstream ENCODER learning rate for fine-tuning (discriminative LR). "
+             "Set lower than --lr_classification (e.g. 2e-4) to preserve pretrained features.",
+    )
+    parser.add_argument(
+        "--label_smoothing", type=float, default=None,
+        help="Label smoothing for the classification cross-entropy (e.g. 0.1).",
     )
     parser.add_argument(
         "--pretrain_val_fraction", type=float, default=0.1,
@@ -2170,6 +2225,9 @@ if __name__ == "__main__":
         pretrain_val_fraction=args.pretrain_val_fraction,
         epochs_classification=args.epochs_classification,
         cls_head_mode=args.cls_head_mode,
+        lr_classification=args.lr_classification,
+        lr_classification_encoder=args.lr_classification_encoder,
+        label_smoothing=args.label_smoothing,
         classification_dataset=args.classification_dataset,
         anomaly_dataset=args.anomaly_dataset,
         checkpoint=args.checkpoint,

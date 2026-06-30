@@ -135,7 +135,32 @@ def classification(config, checkpoint_path,
         mlp_head     = mlp_head,
     ).to(device)
 
-    n_epochs    = config.get("epoch_classification", 20)
+    import copy as _copy
+    import torch.utils.data as _tud
+
+    n_epochs        = config.get("epoch_classification", 20)
+    label_smoothing = float(config.get("label_smoothing", 0.0))
+    best_epoch_sel  = bool(config.get("cls_best_epoch", False))
+
+    # ── optional best-epoch model selection via a small val carved from train ──
+    # (gated by cls_best_epoch so other callers keep the old final-epoch behavior)
+    train_loader = classification_train
+    val_loader   = classification_val
+    if best_epoch_sel and val_loader is None:
+        _base = classification_train.dataset
+        _n    = len(_base)
+        _vn   = max(1, int(round(0.1 * _n)))
+        _perm = torch.randperm(_n, generator=torch.Generator().manual_seed(0)).tolist()
+        _vidx, _tidx = _perm[:_vn], _perm[_vn:]
+        _coll = classification_train.collate_fn
+        _bs   = classification_train.batch_size or 64
+        train_loader = _tud.DataLoader(_tud.Subset(_base, _tidx), batch_size=_bs,
+                                       shuffle=True,  collate_fn=_coll)
+        val_loader   = _tud.DataLoader(_tud.Subset(_base, _vidx), batch_size=_bs,
+                                       shuffle=False, collate_fn=_coll)
+        print(f"  [TSMixer classify] best-epoch selection: "
+              f"{len(_tidx)} train / {len(_vidx)} val  (label_smoothing={label_smoothing})")
+
     _all_params = list(backbone.parameters()) + list(cls_head.parameters())
     _cfg_head_lr = config.get("lr_classification")
     _cfg_enc_lr  = config.get("lr_classification_encoder")
@@ -158,16 +183,30 @@ def classification(config, checkpoint_path,
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=_max_lrs,
-        total_steps=n_epochs * len(classification_train),
+        total_steps=n_epochs * len(train_loader),
         pct_start=0.3, anneal_strategy='cos',
     )
 
+    def _eval(loader):
+        cls_head.eval(); backbone.eval()
+        c = t = 0
+        with torch.no_grad():
+            for patches, labels, padding_mask in loader:
+                B, P, PL, C = patches.shape
+                x      = patches.reshape(B, P * PL, C).float().to(device)
+                labels = labels.to(device)
+                logits = cls_head(backbone(x))
+                c += (logits.argmax(1) == labels).sum().item()
+                t += len(labels)
+        return c / max(t, 1)
+
+    best_val, best_state = -1.0, None
     for epoch in range(n_epochs):
         cls_head.train()
         if not linear_probe:
             backbone.train()
         correct, total = 0, 0
-        for patches, labels, padding_mask in classification_train:
+        for patches, labels, padding_mask in train_loader:
             # [B, P, PL, C] → [B, T, C]
             B, P, PL, C = patches.shape
             x      = patches.reshape(B, P * PL, C).float().to(device)
@@ -176,26 +215,28 @@ def classification(config, checkpoint_path,
             with torch.set_grad_enabled(not linear_probe):
                 enc = backbone(x)         # [B, C, d_model]
             logits = cls_head(enc)        # [B, n_classes]
-            loss   = F.cross_entropy(logits, labels)
+            loss   = F.cross_entropy(logits, labels, label_smoothing=label_smoothing)
             loss.backward()
             optimizer.step()
             scheduler.step()
             correct += (logits.argmax(1) == labels).sum().item()
             total   += len(labels)
-        if epoch % 5 == 0:
+        if best_epoch_sel:
+            va = _eval(val_loader)
+            if va > best_val:
+                best_val   = va
+                best_state = (_copy.deepcopy(backbone.state_dict()),
+                              _copy.deepcopy(cls_head.state_dict()))
+            if epoch % 5 == 0:
+                print(f"  Epoch {epoch:3d} | train acc {correct/total:.4f} | val acc {va:.4f}")
+        elif epoch % 5 == 0:
             print(f"  Epoch {epoch:3d} | train acc {correct/total:.4f}")
 
-    cls_head.eval()
-    tc, tt = 0, 0
-    with torch.no_grad():
-        for patches, labels, padding_mask in classification_test:
-            B, P, PL, C = patches.shape
-            x      = patches.reshape(B, P * PL, C).float().to(device)
-            labels = labels.to(device)
-            enc    = backbone(x)
-            logits = cls_head(enc)
-            tc += (logits.argmax(1) == labels).sum().item()
-            tt += len(labels)
-    test_acc = tc / tt
+    if best_epoch_sel and best_state is not None:
+        backbone.load_state_dict(best_state[0])
+        cls_head.load_state_dict(best_state[1])
+        print(f"  [TSMixer classify] restored best epoch (val acc={best_val:.4f})")
+
+    test_acc = _eval(classification_test)
     print(f"[TSMixer DINO] Test Accuracy: {test_acc:.4f}")
     return test_acc
