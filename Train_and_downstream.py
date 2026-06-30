@@ -217,6 +217,7 @@ def run_dino(skip_train: bool = False,
              pretrain_on_classification: bool = False,
              pretrain_val_fraction: float = 0.1,
              epochs_classification: int = None,
+             cls_head_mode: str = "both",
              encoder_layers: int = None,
              predictor_layers: int = None,
              lr: float = None,
@@ -501,8 +502,18 @@ def run_dino(skip_train: bool = False,
         _tm_cls_mod  = _ilu.module_from_spec(_tm_cls_spec)
         _tm_cls_spec.loader.exec_module(_tm_cls_mod)
 
+        _all_modes = {"linear_probe": True, "fine_tune": False}
+        if cls_head_mode == "both":
+            _modes = [("linear_probe", True), ("fine_tune", False)]
+        elif cls_head_mode in ("fine_tune", "finetune"):
+            _modes = [("fine_tune", False)]
+        elif cls_head_mode in ("linear_probe", "probe"):
+            _modes = [("linear_probe", True)]
+        else:
+            raise ValueError(f"cls_head_mode must be both|fine_tune|linear_probe, got '{cls_head_mode}'")
+
         results = {}
-        for _lp, _name in [(True, "linear_probe"), (False, "fine_tune")]:
+        for _name, _lp in _modes:
             print(f"\n{'='*60}\n  [DINO] Classification ({_name}) on {classification_dataset}\n{'='*60}")
             acc = _tm_cls_mod.classification(
                 dino_cfg, _ckpt, cls_train, None, cls_test, n_classes,
@@ -512,8 +523,7 @@ def run_dino(skip_train: bool = False,
 
         print(f"\n{'='*60}")
         print(f"  SUMMARY — {classification_dataset} (pretrained on its own train series)")
-        print(f"  linear probe: {results['linear_probe']:.4f}    "
-              f"fine-tune: {results['fine_tune']:.4f}")
+        print("  " + "    ".join(f"{k.replace('_', ' ')}: {v:.4f}" for k, v in results.items()))
         print(f"{'='*60}")
         return results
 
@@ -1828,6 +1838,7 @@ def run(model: str,
         pretrain_on_classification: bool = False,
         pretrain_val_fraction: float = 0.1,
         epochs_classification: int = None,
+        cls_head_mode: str = "both",
         pred_len: int = None,
         encoder_layers: int = None,
         predictor_layers: int = None,
@@ -1939,6 +1950,7 @@ def run(model: str,
     if 'pretrain_on_classification' in sig.parameters: kwargs['pretrain_on_classification'] = pretrain_on_classification
     if 'pretrain_val_fraction' in sig.parameters: kwargs['pretrain_val_fraction'] = pretrain_val_fraction
     if 'epochs_classification' in sig.parameters: kwargs['epochs_classification'] = epochs_classification
+    if 'cls_head_mode'         in sig.parameters: kwargs['cls_head_mode']         = cls_head_mode
     if 'classification_only'   in sig.parameters: kwargs['classification_only']   = classification_only
     if 'pred_lens'              in sig.parameters: kwargs['pred_lens']              = pred_lens
     if 'checkpoints'            in sig.parameters: kwargs['checkpoints']            = checkpoints
@@ -2030,8 +2042,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--epochs_classification", type=int, default=None,
-        help="Epochs for the downstream classification head (linear probe AND fine-tune) "
-             "in the pretrain_on_classification flow. Default: config epoch_classification (20).",
+        help="Epochs for the downstream classification head(s) in the "
+             "pretrain_on_classification flow. Default: config epoch_classification (20).",
+    )
+    parser.add_argument(
+        "--cls_head_mode", type=str, default="both",
+        choices=["both", "fine_tune", "linear_probe"],
+        help="Which downstream head(s) to run after classification pretraining: "
+             "'both' (probe + fine-tune), 'fine_tune' only, or 'linear_probe' only.",
     )
     parser.add_argument(
         "--pretrain_val_fraction", type=float, default=0.1,
@@ -2151,6 +2169,7 @@ if __name__ == "__main__":
         pretrain_on_classification=args.pretrain_on_classification.lower() == "true",
         pretrain_val_fraction=args.pretrain_val_fraction,
         epochs_classification=args.epochs_classification,
+        cls_head_mode=args.cls_head_mode,
         classification_dataset=args.classification_dataset,
         anomaly_dataset=args.anomaly_dataset,
         checkpoint=args.checkpoint,
