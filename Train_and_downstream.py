@@ -216,6 +216,7 @@ def run_dino(skip_train: bool = False,
              classification_only: bool = False,
              pretrain_on_classification: bool = False,
              pretrain_val_fraction: float = 0.1,
+             epochs_classification: int = None,
              encoder_layers: int = None,
              predictor_layers: int = None,
              lr: float = None,
@@ -448,6 +449,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['pretrain_classification_dataset'] = classification_dataset
         dino_cfg['pretrain_source'] = None
         dino_cfg['pretrain_val_fraction'] = pretrain_val_fraction
+        if epochs_classification is not None:
+            # key actually read by TSMixerClassification.classification()
+            dino_cfg['epoch_classification']  = epochs_classification
+            dino_cfg['epochs_classification'] = epochs_classification
         dino_cfg['c_in']        = n_vars
         dino_cfg['seq_len']     = seq_len
         dino_cfg['num_patches'] = n_patches
@@ -1822,6 +1827,7 @@ def run(model: str,
         pretrain_only: bool = False,
         pretrain_on_classification: bool = False,
         pretrain_val_fraction: float = 0.1,
+        epochs_classification: int = None,
         pred_len: int = None,
         encoder_layers: int = None,
         predictor_layers: int = None,
@@ -1932,6 +1938,7 @@ def run(model: str,
     if 'pretrain_only'          in sig.parameters: kwargs['pretrain_only']          = pretrain_only
     if 'pretrain_on_classification' in sig.parameters: kwargs['pretrain_on_classification'] = pretrain_on_classification
     if 'pretrain_val_fraction' in sig.parameters: kwargs['pretrain_val_fraction'] = pretrain_val_fraction
+    if 'epochs_classification' in sig.parameters: kwargs['epochs_classification'] = epochs_classification
     if 'classification_only'   in sig.parameters: kwargs['classification_only']   = classification_only
     if 'pred_lens'              in sig.parameters: kwargs['pred_lens']              = pred_lens
     if 'checkpoints'            in sig.parameters: kwargs['checkpoints']            = checkpoints
@@ -2020,6 +2027,11 @@ if __name__ == "__main__":
         help="DINO-pretrain on the classification dataset's TRAIN series (no labels), "
              "then run BOTH a linear probe and a full fine-tune from the same checkpoint. "
              "Requires --classification_dataset; backbone=timemixer only.",
+    )
+    parser.add_argument(
+        "--epochs_classification", type=int, default=None,
+        help="Epochs for the downstream classification head (linear probe AND fine-tune) "
+             "in the pretrain_on_classification flow. Default: config epoch_classification (20).",
     )
     parser.add_argument(
         "--pretrain_val_fraction", type=float, default=0.1,
@@ -2138,6 +2150,7 @@ if __name__ == "__main__":
         pretrain_only=args.pretrain_only.lower() == "true",
         pretrain_on_classification=args.pretrain_on_classification.lower() == "true",
         pretrain_val_fraction=args.pretrain_val_fraction,
+        epochs_classification=args.epochs_classification,
         classification_dataset=args.classification_dataset,
         anomaly_dataset=args.anomaly_dataset,
         checkpoint=args.checkpoint,
