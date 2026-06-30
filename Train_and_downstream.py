@@ -1673,7 +1673,7 @@ def _run_tslib_forecast(
                     freq=freq, label_len=label_len)
                 return torch.utils.data.DataLoader(
                     ds, batch_size=_fc_bs, shuffle=(split == 'train'),
-                    num_workers=_fc_nw, drop_last=True)
+                    num_workers=_fc_nw, drop_last=(split == 'train'))
 
             _tm_train = _fc_loader('train')
             _tm_val   = _fc_loader('val')
