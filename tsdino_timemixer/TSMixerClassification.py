@@ -54,7 +54,8 @@ class ClassificationHead(nn.Module):
 def classification(config, checkpoint_path,
                    classification_train, classification_val,
                    classification_test, n_classes,
-                   linear_probe=True, mlp_head: bool = False):
+                   linear_probe=True, mlp_head: bool = False,
+                   cv_fold: int = 0, cv_folds: int = 1):
     """
     Classification with pretrained TSMixerForDINO teacher encoder.
 
@@ -149,16 +150,27 @@ def classification(config, checkpoint_path,
     if best_epoch_sel and val_loader is None:
         _base = classification_train.dataset
         _n    = len(_base)
-        _vn   = max(1, int(round(0.1 * _n)))
+        # Fixed shuffle (seed 0) so folds are reproducible and non-overlapping.
         _perm = torch.randperm(_n, generator=torch.Generator().manual_seed(0)).tolist()
-        _vidx, _tidx = _perm[:_vn], _perm[_vn:]
+        if cv_folds > 1:
+            # k-fold: val = the cv_fold-th contiguous block (a different 1/k each call)
+            _fsz   = _n // cv_folds
+            _start = cv_fold * _fsz
+            _end   = _start + _fsz if cv_fold < cv_folds - 1 else _n
+            _vidx  = _perm[_start:_end]
+            _tidx  = _perm[:_start] + _perm[_end:]
+            _fold_tag = f"  fold {cv_fold+1}/{cv_folds}"
+        else:
+            _vn   = max(1, int(round(0.1 * _n)))
+            _vidx, _tidx = _perm[:_vn], _perm[_vn:]
+            _fold_tag = ""
         _coll = classification_train.collate_fn
         _bs   = classification_train.batch_size or 64
         train_loader = _tud.DataLoader(_tud.Subset(_base, _tidx), batch_size=_bs,
                                        shuffle=True,  collate_fn=_coll)
         val_loader   = _tud.DataLoader(_tud.Subset(_base, _vidx), batch_size=_bs,
                                        shuffle=False, collate_fn=_coll)
-        print(f"  [TSMixer classify] best-epoch selection: "
+        print(f"  [TSMixer classify] best-epoch selection{_fold_tag}: "
               f"{len(_tidx)} train / {len(_vidx)} val  (label_smoothing={label_smoothing})")
 
     _all_params = list(backbone.parameters()) + list(cls_head.parameters())

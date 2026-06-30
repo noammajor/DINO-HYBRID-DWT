@@ -221,6 +221,7 @@ def run_dino(skip_train: bool = False,
              lr_classification: float = None,
              lr_classification_encoder: float = None,
              label_smoothing: float = None,
+             cls_kfold: int = None,
              encoder_layers: int = None,
              predictor_layers: int = None,
              lr: float = None,
@@ -548,14 +549,33 @@ def run_dino(skip_train: bool = False,
         else:
             raise ValueError(f"cls_head_mode must be both|fine_tune|linear_probe, got '{cls_head_mode}'")
 
+        _kfolds = max(1, int(cls_kfold or 1))
         results = {}
         for _name, _lp in _modes:
-            print(f"\n{'='*60}\n  [DINO] Classification ({_name}) on {classification_dataset}\n{'='*60}")
-            acc = _tm_cls_mod.classification(
-                dino_cfg, _ckpt, cls_train, None, cls_test, n_classes,
-                linear_probe=_lp, mlp_head=(head_type == "mlp"))
-            results[_name] = acc
-            print(f"  [{_name}] Test Accuracy: {acc:.4f}")
+            print(f"\n{'='*60}\n  [DINO] Classification ({_name}) on {classification_dataset}"
+                  f"{f'  [{_kfolds}-fold val]' if _kfolds > 1 else ''}\n{'='*60}")
+            if _kfolds > 1:
+                import statistics as _stat
+                _accs = []
+                for _f in range(_kfolds):
+                    acc_f = _tm_cls_mod.classification(
+                        dino_cfg, _ckpt, cls_train, None, cls_test, n_classes,
+                        linear_probe=_lp, mlp_head=(head_type == "mlp"),
+                        cv_fold=_f, cv_folds=_kfolds)
+                    _accs.append(acc_f)
+                    print(f"  [{_name}] fold {_f+1}/{_kfolds}: test acc={acc_f:.4f}")
+                _mean = sum(_accs) / len(_accs)
+                _std  = _stat.pstdev(_accs) if len(_accs) > 1 else 0.0
+                results[_name] = _mean
+                results[_name + "_std"] = _std
+                print(f"  [{_name}] {_kfolds}-fold test: mean={_mean:.4f} ± {_std:.4f}  "
+                      f"(min={min(_accs):.4f}  max={max(_accs):.4f})")
+            else:
+                acc = _tm_cls_mod.classification(
+                    dino_cfg, _ckpt, cls_train, None, cls_test, n_classes,
+                    linear_probe=_lp, mlp_head=(head_type == "mlp"))
+                results[_name] = acc
+                print(f"  [{_name}] Test Accuracy: {acc:.4f}")
 
         print(f"\n{'='*60}")
         print(f"  SUMMARY — {classification_dataset} (pretrained on its own train series)")
@@ -1878,6 +1898,7 @@ def run(model: str,
         lr_classification: float = None,
         lr_classification_encoder: float = None,
         label_smoothing: float = None,
+        cls_kfold: int = None,
         pred_len: int = None,
         encoder_layers: int = None,
         predictor_layers: int = None,
@@ -1993,6 +2014,7 @@ def run(model: str,
     if 'lr_classification'     in sig.parameters: kwargs['lr_classification']     = lr_classification
     if 'lr_classification_encoder' in sig.parameters: kwargs['lr_classification_encoder'] = lr_classification_encoder
     if 'label_smoothing'       in sig.parameters: kwargs['label_smoothing']       = label_smoothing
+    if 'cls_kfold'             in sig.parameters: kwargs['cls_kfold']             = cls_kfold
     if 'classification_only'   in sig.parameters: kwargs['classification_only']   = classification_only
     if 'pred_lens'              in sig.parameters: kwargs['pred_lens']              = pred_lens
     if 'checkpoints'            in sig.parameters: kwargs['checkpoints']            = checkpoints
@@ -2105,6 +2127,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--label_smoothing", type=float, default=None,
         help="Label smoothing for the classification cross-entropy (e.g. 0.1).",
+    )
+    parser.add_argument(
+        "--cls_kfold", type=int, default=None,
+        help="k-fold validation for the pretrain_on_classification head: each fold holds out "
+             "a different 1/k of TRAIN as the best-epoch val, trains on the rest, evaluates the "
+             "fixed _TEST, and reports mean±std across folds. Default 1 (single 10%% holdout).",
     )
     parser.add_argument(
         "--pretrain_val_fraction", type=float, default=0.1,
@@ -2228,6 +2256,7 @@ if __name__ == "__main__":
         lr_classification=args.lr_classification,
         lr_classification_encoder=args.lr_classification_encoder,
         label_smoothing=args.label_smoothing,
+        cls_kfold=args.cls_kfold,
         classification_dataset=args.classification_dataset,
         anomaly_dataset=args.anomaly_dataset,
         checkpoint=args.checkpoint,
