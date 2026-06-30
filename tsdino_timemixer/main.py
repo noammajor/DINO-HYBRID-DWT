@@ -112,7 +112,29 @@ def train_TS_DINO(args):
         min_len   = cfg.get('monash_min_len', 512),
     )
     _synth_kwargs = dict(_shared_kwargs, window_step=cfg.get('window_step', None))
-    if _pretrain_source in ('monash', 'monash+synthetic'):
+    # Pretrain directly on a classification dataset's TRAIN series (labels ignored).
+    # Takes priority over every other source; c_in is inferred from the data.
+    _cls_pretrain_ds = cfg.get('pretrain_classification_dataset')
+    if _cls_pretrain_ds:
+        print(f"Using classification dataset '{_cls_pretrain_ds}' (train series) for DINO pretraining")
+        _shared_dir = str(Path(__file__).parent.parent / "shared")
+        if _shared_dir not in sys.path:
+            sys.path.insert(0, _shared_dir)
+        from data_loaders.data_puller import ClassificationPretrainPuller
+        _cls_pre_kwargs = dict(
+            data_dir     = cfg['classification_data_dir'],
+            dataset_name = _cls_pretrain_ds,
+            seq_len      = args.num_patches * args.patch_len,
+            patch_size   = args.patch_len,
+            transform    = dataAugmentationDino,
+            val_fraction = cfg.get('pretrain_val_fraction', 0.0),
+            val_min      = cfg.get('pretrain_val_min', 32),
+            split_seed   = args.seed,
+        )
+        combined_dataset = ClassificationPretrainPuller(which='train', **_cls_pre_kwargs)
+        args.c_in = combined_dataset.n_vars   # backbone built with the dataset's var count
+        print(f"Pretrain dataset: {len(combined_dataset)} series (c_in={args.c_in})")
+    elif _pretrain_source in ('monash', 'monash+synthetic'):
         print("Using Monash dataset for DINO pretraining")
         combined_dataset = dpuller.MonashDataPuller(
             data_dir = cfg['monash_data_dir'], **_shared_kwargs)
@@ -126,7 +148,9 @@ def train_TS_DINO(args):
         print("Using Synthetic dataset for DINO pretraining")
         combined_dataset = dpuller.SyntheticArrowDataPuller(
             data_dir = cfg['synthetic_data_dir'], **_synth_kwargs)
-    if _pretrain_source is not None:
+    if _cls_pretrain_ds:
+        pass   # combined_dataset already built from the classification series
+    elif _pretrain_source is not None:
         print(f"Pretrain dataset: {len(combined_dataset)} windows")
     elif 'UCI HAR' in args.data_path:
         print("Using UCI HAR Dataset for DINO training")
@@ -167,7 +191,11 @@ def train_TS_DINO(args):
 
     # ── val dataset (same source, split='val') ────────────────────────────────
     _val_kwargs = dict(_shared_kwargs, split='val')
-    if _pretrain_source in ('monash', 'monash+synthetic'):
+    if _cls_pretrain_ds:
+        # Optional small held-out val carved from the train series (empty for
+        # datasets too small to spare one → final epoch saved as checkpoint_best).
+        val_dataset = ClassificationPretrainPuller(which='val', **_cls_pre_kwargs)
+    elif _pretrain_source in ('monash', 'monash+synthetic'):
         val_dataset = dpuller.MonashDataPuller(data_dir=cfg['monash_data_dir'], **_val_kwargs)
         if _pretrain_source == 'monash+synthetic':
             _val_synth_kwargs = dict(_val_kwargs, window_step=cfg.get('window_step', None))
@@ -465,6 +493,12 @@ def train_TS_DINO(args):
         if utils.is_main_process():
             with (Path(args.output_dir) / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
+    # When pretraining without a val split (e.g. classification train-only), no
+    # checkpoint_best.pth is ever written above. Persist the final epoch under that
+    # name so downstream probe/fine-tune can load it.
+    if val_loader is None and args.epochs > 0 and utils.is_main_process():
+        utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint_best.pth'))
+        print("  → No val set — saved final epoch as checkpoint_best.pth")
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))

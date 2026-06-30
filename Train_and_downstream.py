@@ -214,6 +214,8 @@ def run_dino(skip_train: bool = False,
              checkpoints=None,
              pretrain_only: bool = False,
              classification_only: bool = False,
+             pretrain_on_classification: bool = False,
+             pretrain_val_fraction: float = 0.1,
              encoder_layers: int = None,
              predictor_layers: int = None,
              lr: float = None,
@@ -382,6 +384,134 @@ def run_dino(skip_train: bool = False,
         dino_cfg['vicreg_cov_coeff'] = vicreg_cov_coeff
     if seed is not None:
         dino_cfg['seed'] = seed
+
+    # ── pretrain ON the classification data, then probe + fine-tune ────────────
+    # Self-supervised DINO on the classification dataset's TRAIN series (no labels),
+    # then TWO downstream runs from the same checkpoint: a linear probe (frozen
+    # backbone) and a full fine-tune. seq_len is sized PER DATASET from the series
+    # length so we don't up-sample short series to a fixed window.
+    if pretrain_on_classification:
+        if backbone != "timemixer":
+            raise ValueError("pretrain_on_classification is only wired for backbone='timemixer'")
+        if classification_dataset is None:
+            raise ValueError("pretrain_on_classification=True requires classification_dataset")
+        import torch.nn.functional as _F
+        _shared_dir = str(root_dir / "shared")
+        if _shared_dir not in sys.path:
+            sys.path.insert(0, _shared_dir)
+        from data_loaders.data_puller import ClassificationDataPuller, UEADataset
+
+        cls_dir = dino_cfg["classification_data_dir"]
+        cls_bs  = _get_cls_bs(dino_cfg, "batch_size_classification", 64)
+        p_s     = dino_cfg.get("patch_len", 16)
+        _cls_path = Path(cls_dir) / classification_dataset
+        _is_uea   = _cls_path.exists() and bool(list(_cls_path.glob("*_TRAIN.ts")))
+
+        if _is_uea:
+            _ds_train = UEADataset(str(_cls_path), classification_dataset, split="train")
+            _ds_test  = UEADataset(str(_cls_path), classification_dataset, split="test",
+                                   _shared=_ds_train)
+            n_classes = _ds_train.n_classes
+            n_vars    = _ds_train._samples[0].shape[-1]
+            _max_T    = max(s.shape[0] for s in _ds_train._samples + _ds_test._samples)
+            seq_len   = int(np.ceil(_max_T / p_s)) * p_s     # per-dataset window
+            n_patches = seq_len // p_s
+
+            def _cls_collate(batch, _ps=p_s, _sl=seq_len, _nP=n_patches):
+                xs, ys, orig_lens = zip(*batch)
+                orig_lens = torch.stack(orig_lens)                        # (B,)
+                xs = torch.stack([
+                    x[:_sl] if x.shape[0] >= _sl
+                    else _F.pad(x, (0, 0, 0, _sl - x.shape[0]))
+                    for x in xs
+                ])                                                        # [B, seq_len, C]
+                patch_starts = torch.arange(_nP) * _ps
+                padding_mask = patch_starts.unsqueeze(0) < orig_lens.unsqueeze(1)   # [B, P]
+                xs = xs.reshape(len(batch), _nP, _ps, xs.shape[-1])       # [B, P, PL, C]
+                return xs, torch.stack(ys), padding_mask
+
+            cls_train = torch.utils.data.DataLoader(
+                _ds_train, batch_size=cls_bs, shuffle=True,  collate_fn=_cls_collate)
+            cls_test  = torch.utils.data.DataLoader(
+                _ds_test,  batch_size=cls_bs, shuffle=False, collate_fn=_cls_collate)
+        else:
+            _tr = ClassificationDataPuller(cls_dir, classification_dataset, p_s, which="train")
+            _te = ClassificationDataPuller(cls_dir, classification_dataset, p_s, which="test")
+            n_classes = _tr.n_classes
+            n_vars    = _tr.X.shape[2]
+            seq_len   = _tr.X.shape[1]                        # already padded per dataset
+            n_patches = _tr.n_patches
+            cls_train = torch.utils.data.DataLoader(_tr, batch_size=cls_bs, shuffle=True)
+            cls_test  = torch.utils.data.DataLoader(_te, batch_size=cls_bs, shuffle=False)
+
+        # Configure DINO for this dataset (seq_len drives both pretrain + probe backbone)
+        dino_cfg['pretrain_classification_dataset'] = classification_dataset
+        dino_cfg['pretrain_source'] = None
+        dino_cfg['pretrain_val_fraction'] = pretrain_val_fraction
+        dino_cfg['c_in']        = n_vars
+        dino_cfg['seq_len']     = seq_len
+        dino_cfg['num_patches'] = n_patches
+        dino_cfg['patch_len']   = p_s
+        dino_cfg['step_size']   = p_s
+        _base = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
+        if f"clspre_{classification_dataset}" not in _base:
+            dino_cfg['output_dir'] = str(
+                Path(_base).parent / 'classification' /
+                (Path(_base).name + f'_clspre_{classification_dataset}_cw{seq_len}'))
+
+        dino_main.cfg.update(dino_cfg)
+        args = _config_to_dino_args(dino_cfg)
+        args.linear_probe = linear_probe
+        args.mlp_head     = (head_type == "mlp")
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+        print("\n" + "=" * 60)
+        print(f"  MODEL: DINO (tsdino_timemixer) — PRETRAIN ON CLASSIFICATION DATA")
+        print(f"  dataset: {classification_dataset}   n_vars={n_vars}  "
+              f"n_classes={n_classes}  seq_len={seq_len} ({n_patches}×{p_s})")
+        _n_train = len(cls_train.dataset)
+        _n_val_est = int(round(_n_train * pretrain_val_fraction))
+        _val_note = (f"holdout {_n_val_est} for best-by-val"
+                     if _n_val_est >= 32 else "too small → final-epoch checkpoint")
+        print(f"  pretrain val: frac={pretrain_val_fraction} ({_val_note})")
+        print(f"  output_dir: {args.output_dir}")
+        print("=" * 60)
+
+        if not skip_train:
+            print("\n[DINO] Pretraining on classification train series …")
+            dino_main.train_TS_DINO(args)
+        else:
+            print("[DINO] skip_train=True — reusing existing checkpoint.")
+
+        _ckpt = os.path.join(args.output_dir, "checkpoint_best.pth")
+        if not os.path.exists(_ckpt):
+            _epochs_ckpts = sorted(Path(args.output_dir).glob("checkpoint*.pth"))
+            if _epochs_ckpts:
+                _ckpt = str(_epochs_ckpts[-1])
+            else:
+                raise FileNotFoundError(f"No pretrained checkpoint found in {args.output_dir}")
+
+        _tm_cls_spec = _ilu.spec_from_file_location(
+            "tsmixer_classification", dino_dir / "TSMixerClassification.py")
+        _tm_cls_mod  = _ilu.module_from_spec(_tm_cls_spec)
+        _tm_cls_spec.loader.exec_module(_tm_cls_mod)
+
+        results = {}
+        for _lp, _name in [(True, "linear_probe"), (False, "fine_tune")]:
+            print(f"\n{'='*60}\n  [DINO] Classification ({_name}) on {classification_dataset}\n{'='*60}")
+            acc = _tm_cls_mod.classification(
+                dino_cfg, _ckpt, cls_train, None, cls_test, n_classes,
+                linear_probe=_lp, mlp_head=(head_type == "mlp"))
+            results[_name] = acc
+            print(f"  [{_name}] Test Accuracy: {acc:.4f}")
+
+        print(f"\n{'='*60}")
+        print(f"  SUMMARY — {classification_dataset} (pretrained on its own train series)")
+        print(f"  linear probe: {results['linear_probe']:.4f}    "
+              f"fine-tune: {results['fine_tune']:.4f}")
+        print(f"{'='*60}")
+        return results
+
     pretrain_source = _resolve_pretrain_source(dino_cfg)
     use_global_data = pretrain_source is not None
 
@@ -1690,6 +1820,8 @@ def run(model: str,
         pred_lens=None,
         checkpoints=None,
         pretrain_only: bool = False,
+        pretrain_on_classification: bool = False,
+        pretrain_val_fraction: float = 0.1,
         pred_len: int = None,
         encoder_layers: int = None,
         predictor_layers: int = None,
@@ -1798,6 +1930,8 @@ def run(model: str,
                   pretrain_dataset=pretrain_dataset,
                   forecast_dataset=forecast_dataset)
     if 'pretrain_only'          in sig.parameters: kwargs['pretrain_only']          = pretrain_only
+    if 'pretrain_on_classification' in sig.parameters: kwargs['pretrain_on_classification'] = pretrain_on_classification
+    if 'pretrain_val_fraction' in sig.parameters: kwargs['pretrain_val_fraction'] = pretrain_val_fraction
     if 'classification_only'   in sig.parameters: kwargs['classification_only']   = classification_only
     if 'pred_lens'              in sig.parameters: kwargs['pred_lens']              = pred_lens
     if 'checkpoints'            in sig.parameters: kwargs['checkpoints']            = checkpoints
@@ -1879,6 +2013,20 @@ if __name__ == "__main__":
         "--pretrain_only", type=str, default="false",
         choices=["true", "false"],
         help="Run pretraining only, skip downstream evaluation (true | false)",
+    )
+    parser.add_argument(
+        "--pretrain_on_classification", type=str, default="false",
+        choices=["true", "false"],
+        help="DINO-pretrain on the classification dataset's TRAIN series (no labels), "
+             "then run BOTH a linear probe and a full fine-tune from the same checkpoint. "
+             "Requires --classification_dataset; backbone=timemixer only.",
+    )
+    parser.add_argument(
+        "--pretrain_val_fraction", type=float, default=0.1,
+        help="Fraction of the classification TRAIN series held out as an SSL val set "
+             "to pick the pretraining checkpoint (best-by-val). Auto-skipped when the "
+             "holdout would be < pretrain_val_min (32) samples → final epoch is used. "
+             "Set 0 to always use the final epoch. (pretrain_on_classification only)",
     )
     parser.add_argument(
         "--linear_probe", type=str, default="true",
@@ -1988,6 +2136,8 @@ if __name__ == "__main__":
         pretrain_dataset=args.pretrain_dataset,
         forecast_dataset=args.forecast_dataset,
         pretrain_only=args.pretrain_only.lower() == "true",
+        pretrain_on_classification=args.pretrain_on_classification.lower() == "true",
+        pretrain_val_fraction=args.pretrain_val_fraction,
         classification_dataset=args.classification_dataset,
         anomaly_dataset=args.anomaly_dataset,
         checkpoint=args.checkpoint,

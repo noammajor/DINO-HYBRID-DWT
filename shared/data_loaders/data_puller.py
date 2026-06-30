@@ -1036,6 +1036,85 @@ def make_uea_dataloaders(cls_dir: str, dataset_name: str, batch_size: int = 16):
     return train_loader, None, test_loader, ds_train.n_classes
 
 
+class ClassificationPretrainPuller(Dataset):
+    """
+    Self-supervised (DINO) pretraining over a CLASSIFICATION dataset's series —
+    labels are ignored. Each series is padded (zeros) or truncated to ``seq_len``
+    and passed through ``transform``, yielding the same ``[seq_len, n_vars]``
+    contract as PatchTSTPretrainAdapter. This lets us DINO-pretrain a backbone on
+    the very data it will later be linear-probed / fine-tuned on.
+
+    Only the classification TRAIN split is ever read so the encoder never sees the
+    TEST series — no leakage into the downstream probe. A small held-out
+    validation slice can be carved deterministically from that train split (so the
+    pretraining checkpoint can be picked by SSL val loss); ``which`` selects the
+    'train' or 'val' side of that carve.
+
+    The carve is skipped (val side becomes empty) when the dataset is too small to
+    spare a meaningful val set — ``int(N * val_fraction) < val_min`` — in which case
+    the caller falls back to a final-epoch checkpoint.
+
+    ``seq_len`` must equal the downstream classification window (a multiple of
+    ``patch_size``) because the TSMixer PDM Linear layers are fixed to seq_len.
+
+    Supports the two formats the classify path supports:
+      - UEA/UCR ``*_TRAIN.ts``        → loaded via UEADataset (train-fit normalizer)
+      - npy / .pt / .pkl class folders → loaded via ClassificationDataPuller
+    """
+
+    def __init__(self, data_dir: str, dataset_name: str, seq_len: int,
+                 patch_size: int, transform=None, which: str = 'train',
+                 val_fraction: float = 0.0, val_min: int = 32, split_seed: int = 42):
+        assert which in ('train', 'val')
+        self.seq_len   = int(seq_len)
+        self.transform = transform
+        root = Path(data_dir) / dataset_name
+        is_uea = root.exists() and bool(list(root.glob('*_TRAIN.ts')))
+
+        if is_uea:
+            ds = UEADataset(str(root), dataset_name, split='train')
+            series = [np.asarray(s, dtype=np.float32) for s in ds._samples]
+            self.n_vars = series[0].shape[1]
+        else:
+            cdp  = ClassificationDataPuller(data_dir, dataset_name, patch_size, which='train')
+            X    = cdp.X.numpy()           # [N, padded_T, C]
+            orig = cdp._orig_T.numpy()     # [N] — original (unpadded) length per sample
+            series = [X[i, :int(orig[i]), :].astype(np.float32) for i in range(len(X))]
+            self.n_vars = X.shape[2]
+
+        # Deterministic train/val carve over the train series (labels ignored).
+        n = len(series)
+        n_val = int(round(n * float(val_fraction)))
+        if n_val < int(val_min):
+            n_val = 0      # too small to spare a meaningful val set → all train
+        perm = np.random.RandomState(int(split_seed)).permutation(n)
+        val_idx = set(perm[:n_val].tolist())
+        if which == 'val':
+            sel = [i for i in range(n) if i in val_idx]
+        else:
+            sel = [i for i in range(n) if i not in val_idx]
+        self._series = [series[i] for i in sel]
+
+        print(f"ClassificationPretrainPuller [{which}] ({dataset_name}): "
+              f"{len(self._series)}/{n} series (val_holdout={n_val}) → "
+              f"seq_len {self.seq_len}, {self.n_vars} vars")
+
+    def __len__(self):
+        return len(self._series)
+
+    def __getitem__(self, idx):
+        s = self._series[idx]                       # [T, C]
+        T = s.shape[0]
+        if T < self.seq_len:
+            s = np.pad(s, ((0, self.seq_len - T), (0, 0)))
+        elif T > self.seq_len:
+            s = s[:self.seq_len]
+        x = torch.from_numpy(np.ascontiguousarray(s)).float()   # [seq_len, C]
+        if self.transform is not None:
+            x = self.transform(x)
+        return x
+
+
 # ── Anomaly Detection ─────────────────────────────────────────────────────────
 
 class AnomalyDataPuller(Dataset):
