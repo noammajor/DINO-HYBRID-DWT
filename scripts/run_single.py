@@ -125,6 +125,9 @@ def main():
                         help="Global (teacher) augmentation type, overrides config")
     parser.add_argument("--aug_local",  type=str, default=None,
                         help="Local (student) augmentation type, overrides config")
+    parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
+                        help="DWT wavelet pool for augmentation, e.g. sym4 sym6 sym8 db4 db6 coif2 "
+                             "(DINO only; 'full' family = the 6 listed)")
     parser.add_argument("--mlm_phi",    type=float, default=None,
                         help="MLM weight: phi*DINO+(1-phi)*MLM (DINO only)")
     parser.add_argument("--mlm_mode",   type=str,   default=None,
@@ -190,6 +193,8 @@ def main():
         base_cmd += ["--aug_global", args.aug_global]
     if args.aug_local is not None:
         base_cmd += ["--aug_local", args.aug_local]
+    if args.dwt_wavelet_pool is not None:
+        base_cmd += ["--dwt_wavelet_pool"] + list(args.dwt_wavelet_pool)
     if args.mlm_phi is not None:
         base_cmd += ["--mlm_phi", str(args.mlm_phi)]
     if args.mlm_mode is not None:
