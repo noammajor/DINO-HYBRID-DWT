@@ -61,7 +61,8 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
                  ckpt_tag: str = None,
                  mlm_phi: float = None,
                  mlm_mode: str = None,
-                 subset_frac: float = None):
+                 subset_frac: float = None,
+                 out_dim: int = None):
     lr = MODEL_LR[model]
     cw = num_patches * patch_size
     ckpt_suffix = f"_{ckpt_tag}" if ckpt_tag else ""
@@ -88,6 +89,8 @@ def launch_model(model: str, gpu: int, pretrain_source: str,
         cmd += ["--mlm_mode", mlm_mode]
     if subset_frac is not None:
         cmd += ["--subset_frac", str(subset_frac)]
+    if out_dim is not None and model.startswith("dino"):
+        cmd += ["--out_dim", str(out_dim)]
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
@@ -140,6 +143,8 @@ def main():
                         help="MLM/iBOT loss weight for DINO (0.0 = pure DINO loss, default: from config)")
     parser.add_argument("--subset_frac", type=float, default=None,
                         help="Fraction of pretraining data to use, e.g. 0.5 for 50%% (default: all)")
+    parser.add_argument("--out_dim", type=int, default=None,
+                        help="DINO head output dimension (dino only, e.g. 8192)")
     parser.add_argument("--mlm_mode", type=str, default=None,
                         help="MLM variant: ibot (teacher-guided CE) or mae (MSE vs ground truth) (dino only)")
     parser.add_argument("--dry_run", action="store_true",
@@ -177,7 +182,8 @@ def main():
                             ckpt_tag=args.ckpt_tag,
                             mlm_phi=args.mlm_phi,
                             mlm_mode=args.mlm_mode,
-                            subset_frac=args.subset_frac)
+                            subset_frac=args.subset_frac,
+                            out_dim=args.out_dim)
         if proc is not None:
             procs.append(proc)
 
