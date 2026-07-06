@@ -106,6 +106,8 @@ def main():
     p.add_argument("--which", default="teacher", choices=["teacher", "student"])
     p.add_argument("--seq_len", type=int, default=None)
     p.add_argument("--window", type=int, default=0, help="which non-overlapping window index")
+    p.add_argument("--per_var", action="store_true",
+                   help="also save one contrast-normalized figure per variable")
     p.add_argument("--outdir", default=str(ROOT / "vis"))
     args = p.parse_args()
 
@@ -172,6 +174,28 @@ def main():
     out2 = os.path.join(args.outdir, f"attn_map_{tag}_overlay.png")
     fig.savefig(out2, dpi=130); plt.close(fig)
     print(f"saved: {out2}")
+
+    # ── 3) per-variable, contrast-normalized (attention is near-uniform) ────
+    if args.per_var:
+        pv_dir = os.path.join(args.outdir, "attn_per_variable")
+        os.makedirs(pv_dir, exist_ok=True)
+        for c in range(c_in):
+            a = attn[c]
+            z = (a - a.mean()) / (a.std() + 1e-12)     # emphasis relative to uniform
+            ser = win[:, c]
+            if len(ser) != T:
+                ser = ser[np.linspace(0, len(ser) - 1, T).astype(int)]
+            fig, (axa, axb) = plt.subplots(2, 1, figsize=(11, 4.2), sharex=True,
+                                           gridspec_kw={"height_ratios": [2, 1]})
+            axa.plot(tt, ser, color="0.4", lw=1.0); axa.set_ylabel("series")
+            axa.set_title(f"{args.dataset} · {cols[c]} — attention over time ({args.which})", fontsize=10)
+            axb.bar(tt, z, width=1.0, color=np.where(z >= 0, "#d62728", "#4477aa"))
+            axb.axhline(0, color="0.5", lw=0.6)
+            axb.set_ylabel("attn z-score"); axb.set_xlabel("timestep")
+            fig.tight_layout()
+            o = os.path.join(pv_dir, f"attn_{tag}_{c}_{cols[c]}.png")
+            fig.savefig(o, dpi=120); plt.close(fig)
+        print(f"saved: {c_in} per-variable figures -> {pv_dir}/")
 
 
 if __name__ == "__main__":
