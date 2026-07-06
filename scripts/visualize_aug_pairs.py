@@ -59,18 +59,23 @@ def synthetic_signal(n, seed):
     return x.astype(np.float32)
 
 
-def real_signal(dataset, var, n):
-    """Load one standardized window from a registered dataset's CSV."""
+def _load_cols(dataset):
+    """Return (dataframe, list-of-value-columns) for a registered dataset."""
     import pandas as pd
     from dataset_registry import get_dataset_info
     info = get_dataset_info(dataset)
     df = pd.read_csv(info["csv_path"])
     cols = [c for c in df.columns if c.lower() not in ("date", "timestamp")]
+    return df, cols
+
+
+def real_signal(df, cols, var, n):
+    """One standardized middle window of channel `var` (name returned too)."""
     col = cols[var % len(cols)]
     s = df[col].values.astype(np.float32)
     s = (s - s.mean()) / (s.std() + 1e-8)
     start = max(0, (len(s) - n) // 2)          # a middle window
-    return s[start:start + n]
+    return s[start:start + n], col
 
 
 # ── augmentation registry (family, label, instance) ───────────────────────
@@ -108,34 +113,12 @@ def apply_aug(aug, x_np):
     return y[:, 0] if y.ndim == 2 else np.asarray(y).reshape(-1)[:len(x_np)]
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default=None, help="registered dataset for a real window (else synthetic)")
-    p.add_argument("--var", type=int, default=0, help="which channel of the dataset")
-    p.add_argument("--seq_len", type=int, default=336)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--wavelets", nargs="+", default=["sym4", "sym6", "sym8", "db4", "db6"])
-    p.add_argument("--level", type=int, default=3)
-    p.add_argument("--sigma", type=float, default=0.6, help="soft_threshold sigma")
-    p.add_argument("--out", default=None)
-    args = p.parse_args()
-
-    np.random.seed(args.seed); torch.manual_seed(args.seed)
-    import random as _r; _r.seed(args.seed)
-
-    if args.dataset:
-        x = real_signal(args.dataset, args.var, args.seq_len)
-        title_src = f"{args.dataset} (ch {args.var})"
-    else:
-        x = synthetic_signal(args.seq_len, args.seed)
-        title_src = "synthetic"
-
-    augs = build_augs(args.wavelets, args.level, args.sigma)
-
+def render(x, title_src, out, augs, args):
+    """Save the augmentation grid + teacher/student pair for one signal `x`."""
+    t = np.arange(len(x))
     ncol = 3
     nrow = int(np.ceil(len(augs) / ncol))
     fig, axes = plt.subplots(nrow, ncol, figsize=(4.6 * ncol, 2.6 * nrow), squeeze=False)
-    t = np.arange(len(x))
     for i, (fam, label, aug) in enumerate(augs):
         ax = axes[i // ncol][i % ncol]
         y = apply_aug(aug, x)
@@ -147,18 +130,14 @@ def main():
             ax.legend(fontsize=7, loc="upper right")
     for j in range(len(augs), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
-
     fig.suptitle(f"DINO augmentations on {title_src}  "
                  f"(wavelets={','.join(args.wavelets)}, level={args.level}, sigma={args.sigma})",
                  fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-
-    out = args.out or str(ROOT / "vis" / f"aug_pairs_{args.dataset or 'synthetic'}.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    fig.savefig(out, dpi=130)
+    fig.savefig(out, dpi=130); plt.close(fig)
     print(f"saved: {out}")
 
-    # ── the actual DINO teacher/student PAIR ───────────────────────────────
     teacher = DWTAugmentation(wavelet_pool=args.wavelets, level=args.level,
                               mode="soft_threshold", soft_threshold_sigma=args.sigma)
     student = DWTAugmentation(wavelet_pool=args.wavelets, level=args.level,
@@ -171,8 +150,40 @@ def main():
     ax.legend(fontsize=8); ax.tick_params(labelsize=8)
     fig2.tight_layout()
     out2 = out.replace(".png", "_pair.png")
-    fig2.savefig(out2, dpi=130)
+    fig2.savefig(out2, dpi=130); plt.close(fig2)
     print(f"saved: {out2}")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--dataset", default=None, help="registered dataset for a real window (else synthetic)")
+    p.add_argument("--var", type=int, default=0, help="which channel of the dataset")
+    p.add_argument("--all_vars", action="store_true", help="render one figure per channel of the dataset")
+    p.add_argument("--seq_len", type=int, default=336)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--wavelets", nargs="+", default=["sym4", "sym6", "sym8", "db4", "db6"])
+    p.add_argument("--level", type=int, default=3)
+    p.add_argument("--sigma", type=float, default=0.6, help="soft_threshold sigma")
+    p.add_argument("--outdir", default=str(ROOT / "vis"))
+    args = p.parse_args()
+
+    np.random.seed(args.seed); torch.manual_seed(args.seed)
+    import random as _r; _r.seed(args.seed)
+    augs = build_augs(args.wavelets, args.level, args.sigma)
+
+    if not args.dataset:
+        render(synthetic_signal(args.seq_len, args.seed), "synthetic",
+               os.path.join(args.outdir, "aug_pairs_synthetic.png"), augs, args)
+        return
+
+    df, cols = _load_cols(args.dataset)
+    vars_to_do = range(len(cols)) if args.all_vars else [args.var]
+    for v in vars_to_do:
+        # reseed per var so the stochastic augs are comparable across channels
+        np.random.seed(args.seed); torch.manual_seed(args.seed); _r.seed(args.seed)
+        x, colname = real_signal(df, cols, v, args.seq_len)
+        out = os.path.join(args.outdir, f"aug_pairs_{args.dataset}_var{v}_{colname}.png")
+        render(x, f"{args.dataset} · ch {v} ({colname})", out, augs, args)
 
 
 if __name__ == "__main__":
