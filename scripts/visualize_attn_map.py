@@ -180,8 +180,7 @@ def main():
         pv_dir = os.path.join(args.outdir, "attn_per_variable")
         os.makedirs(pv_dir, exist_ok=True)
         for c in range(c_in):
-            a = attn[c]
-            z = (a - a.mean()) / (a.std() + 1e-12)     # emphasis relative to uniform
+            a = attn[c]                                # actual attention weights [T]
             ser = win[:, c]
             if len(ser) != T:
                 ser = ser[np.linspace(0, len(ser) - 1, T).astype(int)]
@@ -189,9 +188,13 @@ def main():
                                            gridspec_kw={"height_ratios": [2, 1]})
             axa.plot(tt, ser, color="0.4", lw=1.0); axa.set_ylabel("series")
             axa.set_title(f"{args.dataset} · {cols[c]} — attention over time ({args.which})", fontsize=10)
-            axb.bar(tt, z, width=1.0, color=np.where(z >= 0, "#d62728", "#4477aa"))
-            axb.axhline(0, color="0.5", lw=0.6)
-            axb.set_ylabel("attn z-score"); axb.set_xlabel("timestep")
+            # real attention weights as a colour strip; colour scale fit to this
+            # channel's range so the near-uniform structure is visible.
+            im = axb.imshow(a[None, :], aspect="auto", cmap="magma",
+                            extent=[0, T, 0, 1], vmin=a.min(), vmax=a.max(),
+                            interpolation="nearest")
+            axb.set_yticks([]); axb.set_xlabel("timestep")
+            fig.colorbar(im, ax=axb, orientation="vertical", pad=0.01, label="attention weight")
             fig.tight_layout()
             o = os.path.join(pv_dir, f"attn_{tag}_{c}_{cols[c]}.png")
             fig.savefig(o, dpi=120); plt.close(fig)
