@@ -640,10 +640,18 @@ def run_dino(skip_train: bool = False,
         ds_fore = get_dataset_info(forecast_dataset)
         dino_cfg["data_path"]                      = ds_pre["csv_path"]
         dino_cfg["data_path_forecast_training"]    = ds_fore["csv_path"]  # required by DINO dataset2 even during pretrain_only
-        dino_cfg["c_in"]                           = ds_pre["c_in"]
+        # c_in drives the model channel count. For a forecast-only run (skip_train)
+        # the model must match the FORECAST data — this is what enables cross-domain
+        # (load a checkpoint pretrained on dataset A, forecast dataset B with a
+        # different channel count; the c_in-dependent RevIN layers are shape-skipped
+        # on load, exactly like the synthetic-backbone path). Only when we actually
+        # pretrain here does c_in need to be the pretrain dataset's.
+        dino_cfg["c_in"]                           = ds_fore["c_in"] if skip_train else ds_pre["c_in"]
+        _xdom = (pretrain_dataset != forecast_dataset)
         print("\n" + "="*60)
         print(f"  MODEL: DINO  (tsdino_{backbone})")
-        print(f"  pretrain: {pretrain_dataset}   forecast: {forecast_dataset}")
+        print(f"  pretrain: {pretrain_dataset}   forecast: {forecast_dataset}"
+              + ("   [CROSS-DOMAIN]" if _xdom else ""))
         print("="*60)
     if not pretrain_only and forecast_dataset is not None:
         dino_cfg["data_path_forecast_test"]        = ds_fore["csv_path"]
