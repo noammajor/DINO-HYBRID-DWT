@@ -950,7 +950,24 @@ def test_run(args):
         dataset_forecasting_val = _DS_CLS(_root, split='val', size=_size, features='M', data_path=_fname, scale=True)
     except Exception:
         dataset_forecasting_val = None
-    dataset_forecasting_test  = _DS_CLS(_root, split='test',  size=_size, features='M', data_path=_fname, scale=True)
+    # ── zero-shot cross-domain: train/val head on the source dataset, but TEST
+    # on a different (target) CSV with no further training. Set via env var
+    # TS_FORECAST_TEST_CSV=<abs path to target csv>. Default = in-domain test.
+    _test_csv = os.environ.get("TS_FORECAST_TEST_CSV", _csv_path)
+    if _test_csv != _csv_path:
+        _test_root  = os.path.dirname(os.path.abspath(_test_csv))
+        _test_fname = os.path.basename(_test_csv)
+        if 'etth' in _test_fname.lower():
+            _DS_CLS_TEST = Dataset_ETT_hour
+        elif 'ettm' in _test_fname.lower():
+            _DS_CLS_TEST = Dataset_ETT_minute
+        else:
+            _DS_CLS_TEST = Dataset_Custom
+        print(f"  [DINO forecast] ZERO-SHOT cross-domain: head trained on {_fname}, "
+              f"TESTED on {_test_fname} (no target training)")
+    else:
+        _test_root, _test_fname, _DS_CLS_TEST = _root, _fname, _DS_CLS
+    dataset_forecasting_test  = _DS_CLS_TEST(_test_root, split='test',  size=_size, features='M', data_path=_test_fname, scale=True)
 
     _is_distributed = utils.is_dist_avail_and_initialized()
     # TS_FORECAST_DROP_LAST=1 drops the last incomplete batch on train/val/test,
