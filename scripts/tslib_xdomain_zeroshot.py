@@ -138,6 +138,14 @@ def run_pair(model_name, source, target, device, pred_lens):
         margs = B.build_model_args(ea, "long_term_forecast")
         margs.pred_len = pred_len
         margs.enc_in = margs.dec_in = margs.c_out = c_in
+        if model_name == "TimeMixer":
+            # TimeMixer is inherently multi-scale: it down-samples the input into
+            # several resolutions and mixes them. The generic builder leaves
+            # down_sampling_layers=0 → season_list has one element → IndexError at
+            # season_list[1]. Inject the standard TimeMixer multi-scale config.
+            margs.down_sampling_layers = 3
+            margs.down_sampling_window = 2
+            margs.down_sampling_method = "avg"
         model = B.build_tslib_model(margs).to(device)
         fwd = _make_forward(model, device, pred_len, ea.label_len)
 
