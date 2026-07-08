@@ -970,6 +970,15 @@ def test_run(args):
     dataset_forecasting_test  = _DS_CLS_TEST(_test_root, split='test',  size=_size, features='M', data_path=_test_fname, scale=True)
 
     _is_distributed = utils.is_dist_avail_and_initialized()
+    # TS_FORECAST_BS overrides the forecast batch size (args.batch_size_forecast comes
+    # from config and is NOT affected by the pretrain --batch_size flag). Needed for
+    # very high-channel datasets (e.g. traffic, 862ch): the channel-independent
+    # backbone processes batch*channels sequences, and TimeMixer's decomposition
+    # avg_pool overflows int32 when batch*channels*d_model*seq exceeds ~2.1B.
+    _fc_bs_env = os.environ.get("TS_FORECAST_BS")
+    if _fc_bs_env:
+        args.batch_size_forecast = int(_fc_bs_env)
+        print(f"  [DINO forecast] batch_size_forecast override -> {args.batch_size_forecast}")
     # TS_FORECAST_DROP_LAST=1 drops the last incomplete batch on train/val/test,
     # matching plain TimeMixer's forecast loaders (drop_last=True) for a fair
     # head-to-head comparison. Default 0 = score every window.
