@@ -33,7 +33,12 @@ class moving_avg(nn.Module):
         front = x[:, 0:1, :].repeat(1, (self.kernel_size - 1) // 2, 1)
         end = x[:, -1:, :].repeat(1, (self.kernel_size - 1) // 2, 1)
         x = torch.cat([front, x, end], dim=1)
-        x = self.avg(x.permute(0, 2, 1))
+        _xp = x.permute(0, 2, 1)
+        import os as _os
+        if _os.environ.get("TS_DEBUG_MOVAVG") == "1":
+            print(f"[movavg DEBUG] kernel={self.kernel_size} pool_in={tuple(_xp.shape)} "
+                  f"numel={_xp.numel():,}", flush=True)
+        x = self.avg(_xp)
         x = x.permute(0, 2, 1)
         return x
 
