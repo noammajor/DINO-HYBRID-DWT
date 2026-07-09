@@ -1941,6 +1941,10 @@ def run(model: str,
         ckpt_tag: str = None,
         aug_global: str = None,
         aug_local: str = None,
+        n_global_crops: int = None,
+        n_local_crops: int = None,
+        global_crop_ratio: float = None,
+        local_crop_ratio: float = None,
         mlm_phi: float = None,
         mlm_mode: str = None,
         mlm_block_size: int = None,
@@ -2065,6 +2069,10 @@ def run(model: str,
     if 'ckpt_tag'              in sig.parameters: kwargs['ckpt_tag']              = ckpt_tag
     if 'aug_global'            in sig.parameters: kwargs['aug_global']            = aug_global
     if 'aug_local'             in sig.parameters: kwargs['aug_local']             = aug_local
+    if 'n_global_crops'        in sig.parameters: kwargs['n_global_crops']        = n_global_crops
+    if 'n_local_crops'         in sig.parameters: kwargs['n_local_crops']         = n_local_crops
+    if 'global_crop_ratio'     in sig.parameters: kwargs['global_crop_ratio']     = global_crop_ratio
+    if 'local_crop_ratio'      in sig.parameters: kwargs['local_crop_ratio']      = local_crop_ratio
     if 'mlm_phi'               in sig.parameters: kwargs['mlm_phi']               = mlm_phi
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
     if 'mlm_block_size'        in sig.parameters: kwargs['mlm_block_size']        = mlm_block_size
