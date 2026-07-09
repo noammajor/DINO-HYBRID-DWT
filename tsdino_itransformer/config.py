@@ -228,7 +228,7 @@ config = {
     # and a backbone built for c_in variates only handles c_in-channel data.
     "itransformer_d_model":         128,  # embedding dim inside the iTransformer backbone
     "itransformer_d_ff":            256,  # encoder FFN hidden dim
-    "itransformer_e_layers":        2,    # number of encoder layers
+    "itransformer_e_layers":        4,    # number of encoder layers
     "itransformer_n_heads":         8,    # attention heads
     "itransformer_factor":          1,    # attention factor (unused for FullAttention)
     "itransformer_activation":      "gelu",
