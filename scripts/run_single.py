@@ -30,7 +30,7 @@ IN_DOMAIN_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather",
                       "electricity", "traffic",
                       "exchange", "wind", "solar", "metr_la", "aqwan", "aqshunyi",
                       "czelan", "zafnoo", "pm2_5", "temp"]
-ALL_MODELS         = ["dino_timemixer", "dino_patchtst", "patchtst",
+ALL_MODELS         = ["dino_timemixer", "dino_patchtst", "dino_itransformer", "patchtst",
                       "timemixer", "autoformer", "fedformer", "dlinear"]
 
 # Supervised models train directly on forecasting — no pretrain phase, no checkpoint copy.

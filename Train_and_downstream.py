@@ -261,10 +261,10 @@ def run_dino(skip_train: bool = False,
              tsmixer_e_layers: int = None,
              patch_len: int = None,
              backbone: str = "timemixer"):
-    if backbone not in ("timemixer", "patchtst", "ts2vec", "timesnet", "timerxl"):
-        raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst', 'ts2vec', 'timesnet' or 'timerxl')")
+    if backbone not in ("timemixer", "patchtst", "ts2vec", "timesnet", "timerxl", "itransformer"):
+        raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst', 'ts2vec', 'timesnet', 'timerxl' or 'itransformer')")
     root_dir   = Path(__file__).parent
-    _dino_dirs = {"timemixer": "tsdino_timemixer", "patchtst": "tsdino_patchtst", "ts2vec": "tsdino_ts2vec", "timesnet": "tsdino_timesnet", "timerxl": "tsdino_timerxl"}
+    _dino_dirs = {"timemixer": "tsdino_timemixer", "patchtst": "tsdino_patchtst", "ts2vec": "tsdino_ts2vec", "timesnet": "tsdino_timesnet", "timerxl": "tsdino_timerxl", "itransformer": "tsdino_itransformer"}
     dino_dir   = root_dir / _dino_dirs[backbone]
     shared_dir = root_dir / "shared"
     _add_path(root_dir)          # so `from tsdino_common import …` resolves inside main.py
@@ -281,7 +281,7 @@ def run_dino(skip_train: bool = False,
 
     # Both backbone configs default output_dir to ./checkpoints — keep the patchtst
     # backbone's checkpoints in a separate tree so the two never collide.
-    if backbone in ("patchtst", "ts2vec", "timesnet", "timerxl"):
+    if backbone in ("patchtst", "ts2vec", "timesnet", "timerxl", "itransformer"):
         _od = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
         if Path(_od).name == 'checkpoints':
             dino_cfg['output_dir'] = str(Path(_od).parent / f'checkpoints_{backbone}')
@@ -1879,6 +1879,7 @@ RUNNERS = {
     "dino_ts2vec":     functools.partial(run_dino, backbone="ts2vec"),
     "dino_timesnet":   functools.partial(run_dino, backbone="timesnet"),
     "dino_timerxl":    functools.partial(run_dino, backbone="timerxl"),
+    "dino_itransformer": functools.partial(run_dino, backbone="itransformer"),
     "patchtst":        run_patchtst,
     "patchtst_random": lambda skip_train=False, pretrain_dataset=None, forecast_dataset=None, classification_dataset=None, anomaly_dataset=None, pretrain_only=False, classification_only=False, pred_lens=None, checkpoints=None, encoder_layers=None, pretrain_source=None, num_patches=None, linear_probe=True, head_type="linear": run_patchtst(skip_train=skip_train, pretrain_dataset=pretrain_dataset, forecast_dataset=forecast_dataset, classification_dataset=classification_dataset, anomaly_dataset=anomaly_dataset, pretrain_only=pretrain_only, classification_only=classification_only, pred_lens=pred_lens, checkpoints=checkpoints, random_encoder=True, encoder_layers=encoder_layers, pretrain_source=pretrain_source, num_patches=num_patches, linear_probe=linear_probe, head_type=head_type),
     "timemixer":       run_timemixer,
@@ -2083,7 +2084,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", type=str, required=True,
         choices=list(RUNNERS),
-        help="Which model to run: dino_timemixer | dino_patchtst | dino_ts2vec | patchtst | timemixer | autoformer | fedformer | dlinear",
+        help="Which model to run: dino_timemixer | dino_patchtst | dino_ts2vec | dino_itransformer | patchtst | timemixer | autoformer | fedformer | dlinear",
     )
     parser.add_argument(
         "--pretrain_dataset", type=str, default=None,

@@ -139,13 +139,13 @@ def render(x, title_src, out, augs, args):
     print(f"saved: {out}")
 
     teacher = DWTAugmentation(wavelet_pool=args.wavelets, level=args.level,
-                              mode="soft_threshold", soft_threshold_sigma=args.sigma)
+                              mode=args.teacher_mode, soft_threshold_sigma=args.sigma)
     student = DWTAugmentation(wavelet_pool=args.wavelets, level=args.level,
                               mode="high_perturb", high_perturb_noise_range=(0.10, 0.30))
     fig2, ax = plt.subplots(figsize=(9, 3.2))
     ax.plot(t, x, color="0.6", lw=1.0, label="original")
-    ax.plot(t, apply_aug(teacher, x), color="#1f77b4", lw=1.5, label="teacher (dwt_soft_threshold)")
-    ax.plot(t, apply_aug(student, x), color="#d62728", lw=1.5, alpha=0.8, label="student (dwt_hard)")
+    ax.plot(t, apply_aug(teacher, x), color="#1f77b4", lw=1.5, label=f"teacher (dwt_{args.teacher_mode})")
+    ax.plot(t, apply_aug(student, x), color="#d62728", lw=1.5, alpha=0.8, label="student (dwt_hard / high_perturb)")
     ax.set_title(f"DINO teacher/student pair — {title_src}", fontsize=10)
     ax.legend(fontsize=8); ax.tick_params(labelsize=8)
     fig2.tight_layout()
@@ -164,6 +164,9 @@ def main():
     p.add_argument("--wavelets", nargs="+", default=["sym4", "sym6", "sym8", "db4", "db6"])
     p.add_argument("--level", type=int, default=3)
     p.add_argument("--sigma", type=float, default=0.6, help="soft_threshold sigma")
+    p.add_argument("--teacher_mode", default="low_pass",
+                   choices=["low_pass", "soft_threshold"],
+                   help="DWT mode for the teacher view in the pair figure (student is always high_perturb/dwt_hard)")
     p.add_argument("--outdir", default=str(ROOT / "vis"))
     args = p.parse_args()
 
