@@ -851,12 +851,20 @@ class DataAugmentationDino:
         return transforms
 
     def _random_crop(self, x, crop_ratio):
+        # RandomResizedCrop analog (image-DINO): take a sub-window then resize it
+        # back to the original length via linear interpolation, so fixed-seq_len
+        # backbones (e.g. TimeMixer) can process the cropped view.
         timesteps = x.shape[0]
         crop_len  = int(timesteps * crop_ratio)
-        if crop_len >= timesteps:
+        if crop_len >= timesteps or crop_len < 2:
             return x
-        start = np.random.randint(0, timesteps - crop_len + 1)
-        return x[start : start + crop_len, :]
+        start   = np.random.randint(0, timesteps - crop_len + 1)
+        cropped = x[start : start + crop_len, :]                 # [crop_len, n_vars]
+        resized = F.interpolate(
+            cropped.transpose(0, 1).unsqueeze(0),               # [1, n_vars, crop_len]
+            size=timesteps, mode='linear', align_corners=False,
+        )
+        return resized.squeeze(0).transpose(0, 1)                # [timesteps, n_vars]
 
     def _mask_patches(self, x):
         """Randomly zero out recon_mask_ratio fraction of non-overlapping patches.
