@@ -243,6 +243,10 @@ def run_dino(skip_train: bool = False,
              ckpt_tag: str = None,
              aug_global: str = None,
              aug_local: str = None,
+             n_global_crops: int = None,
+             n_local_crops: int = None,
+             global_crop_ratio: float = None,
+             local_crop_ratio: float = None,
              mlm_phi: float = None,
              mlm_mode: str = None,
              mlm_block_size: int = None,
@@ -356,9 +360,13 @@ def run_dino(skip_train: bool = False,
     if warmup_epochs is not None:
         dino_cfg['warmup_epochs'] = warmup_epochs
     if aug_global is not None:
-        dino_cfg['global_crops'] = [{"type": aug_global, "crop_ratio": 1.0}]
+        _ng  = n_global_crops if n_global_crops is not None else 1
+        _gcr = global_crop_ratio if global_crop_ratio is not None else 1.0
+        dino_cfg['global_crops'] = [{"type": aug_global, "crop_ratio": _gcr} for _ in range(_ng)]
     if aug_local is not None:
-        dino_cfg['local_crops']  = [{"type": aug_local,  "crop_ratio": 1.0}]
+        _nl  = n_local_crops if n_local_crops is not None else 1
+        _lcr = local_crop_ratio if local_crop_ratio is not None else 1.0
+        dino_cfg['local_crops']  = [{"type": aug_local, "crop_ratio": _lcr} for _ in range(_nl)]
     if mlm_phi is not None:
         dino_cfg['mlm_phi'] = mlm_phi
     if mlm_mode is not None:
@@ -2215,6 +2223,14 @@ if __name__ == "__main__":
                         help="Global (teacher) augmentation type, overrides config (e.g. 'galilien', 'dwt_soft_threshold')")
     parser.add_argument("--aug_local",  type=str, default=None,
                         help="Local (student) augmentation type, overrides config (e.g. 'lorentz', 'dwt_high_perturb')")
+    parser.add_argument("--n_global_crops", type=int, default=None,
+                        help="Number of global (teacher) crops — DINO multi-crop (e.g. 2)")
+    parser.add_argument("--n_local_crops",  type=int, default=None,
+                        help="Number of local (student) crops — DINO multi-crop (e.g. 6)")
+    parser.add_argument("--global_crop_ratio", type=float, default=None,
+                        help="Crop ratio for global crops (1.0 = no crop)")
+    parser.add_argument("--local_crop_ratio",  type=float, default=None,
+                        help="Crop ratio for local crops (e.g. 0.4 for DINO-style small crops)")
     parser.add_argument("--mlm_phi",    type=float, default=None,
                         help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
     parser.add_argument("--batch_size", type=int,   default=None,
@@ -2289,6 +2305,10 @@ if __name__ == "__main__":
         patch_len=args.patch_len,
         aug_global=args.aug_global,
         aug_local=args.aug_local,
+        n_global_crops=args.n_global_crops,
+        n_local_crops=args.n_local_crops,
+        global_crop_ratio=args.global_crop_ratio,
+        local_crop_ratio=args.local_crop_ratio,
         mlm_phi=args.mlm_phi,
         mlm_mode=args.mlm_mode,
         mlm_block_size=args.mlm_block_size,

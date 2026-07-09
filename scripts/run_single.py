@@ -125,6 +125,14 @@ def main():
                         help="Global (teacher) augmentation type, overrides config")
     parser.add_argument("--aug_local",  type=str, default=None,
                         help="Local (student) augmentation type, overrides config")
+    parser.add_argument("--n_global_crops", type=int, default=None,
+                        help="Number of global (teacher) crops — DINO multi-crop")
+    parser.add_argument("--n_local_crops",  type=int, default=None,
+                        help="Number of local (student) crops — DINO multi-crop")
+    parser.add_argument("--global_crop_ratio", type=float, default=None,
+                        help="Crop ratio for global crops (1.0 = no crop)")
+    parser.add_argument("--local_crop_ratio",  type=float, default=None,
+                        help="Crop ratio for local crops (e.g. 0.4)")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="DWT wavelet pool for augmentation, e.g. sym4 sym6 sym8 db4 db6 coif2 "
                              "(DINO only; 'full' family = the 6 listed)")
@@ -193,6 +201,14 @@ def main():
         base_cmd += ["--aug_global", args.aug_global]
     if args.aug_local is not None:
         base_cmd += ["--aug_local", args.aug_local]
+    if args.n_global_crops is not None:
+        base_cmd += ["--n_global_crops", str(args.n_global_crops)]
+    if args.n_local_crops is not None:
+        base_cmd += ["--n_local_crops", str(args.n_local_crops)]
+    if args.global_crop_ratio is not None:
+        base_cmd += ["--global_crop_ratio", str(args.global_crop_ratio)]
+    if args.local_crop_ratio is not None:
+        base_cmd += ["--local_crop_ratio", str(args.local_crop_ratio)]
     if args.dwt_wavelet_pool is not None:
         base_cmd += ["--dwt_wavelet_pool"] + list(args.dwt_wavelet_pool)
     if args.mlm_phi is not None:
