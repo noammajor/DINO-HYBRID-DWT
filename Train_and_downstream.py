@@ -191,6 +191,7 @@ def _config_to_dino_args(cfg):
         n_classes                   = cfg.get("n_classes", 10),
         epochs_classification       = cfg.get("epochs_classification", 50),
         lr_classification           = cfg.get("lr_classification", 0.001),
+        lr_classification_encoder   = cfg.get("lr_classification_encoder", None),
         min_lr_classification       = cfg.get("min_lr_classification", 1e-6),
         batch_size_classification   = cfg.get("batch_size_classification", 64),
         seq_len_classification      = cfg.get("seq_len_classification", 128),
@@ -215,6 +216,7 @@ def run_dino(skip_train: bool = False,
              pretrain_only: bool = False,
              classification_only: bool = False,
              pretrain_on_classification: bool = False,
+             pretrain_on_anomaly: bool = False,
              pretrain_val_fraction: float = 0.1,
              epochs_classification: int = None,
              cls_head_mode: str = "both",
@@ -333,6 +335,14 @@ def run_dino(skip_train: bool = False,
         dino_cfg['epochs'] = epochs
     if epochs_forecasting is not None:
         dino_cfg['epochs_forecasting'] = epochs_forecasting
+    # Classification-head tuning knobs — propagate for the STANDARD classify path
+    # (the pretrain_on_classification branch sets its own copies below).
+    if lr_classification is not None:
+        dino_cfg['lr_classification'] = lr_classification
+    if lr_classification_encoder is not None:
+        dino_cfg['lr_classification_encoder'] = lr_classification_encoder
+    if epochs_classification is not None:
+        dino_cfg['epochs_classification'] = epochs_classification
     if encoder_layers is not None:
         dino_cfg['n_layers'] = encoder_layers
         _psrc = dino_cfg.get('pretrain_source')
@@ -349,6 +359,10 @@ def run_dino(skip_train: bool = False,
     if seq_len is not None:
         _patch_len = dino_cfg.get('patch_len', 16)
         dino_cfg['num_patches'] = seq_len // _patch_len
+        # Also drive the anomaly window (AnomalyDataPuller win_size reads cfg['seq_len']).
+        # Without this it falls back to 512 → 32 patches, mismatching the backbone's
+        # num_patches (e.g. 72) positional embeddings and crashing the forward pass.
+        dino_cfg['seq_len'] = seq_len
     if num_patches is not None:
         dino_cfg['num_patches'] = num_patches
         if classification_dataset is not None:
@@ -591,6 +605,98 @@ def run_dino(skip_train: bool = False,
         print(f"{'='*60}")
         return results
 
+    # ── pretrain ON the anomaly data, then fine-tune the detector ──────────────
+    # Self-supervised DINO on the anomaly dataset's NORMAL (train) stream — no
+    # labels — then a reconstruction fine-tune from that same checkpoint. The
+    # window (seq_len) is shared by both stages because the TSMixer PDM layers are
+    # seq_len-fixed; default 100 ts (num_patches 10 × patch_len 10).
+    if pretrain_on_anomaly:
+        if backbone != "timemixer":
+            raise ValueError("pretrain_on_anomaly is only wired for backbone='timemixer'")
+        if anomaly_dataset is None:
+            raise ValueError("pretrain_on_anomaly=True requires anomaly_dataset")
+        _shared_dir = str(root_dir / "shared")
+        if _shared_dir not in sys.path:
+            sys.path.insert(0, _shared_dir)
+        from data_loaders.data_puller import AnomalyDataPuller
+
+        anom_dir = dino_cfg["anomaly_data_dir"]
+        anom_bs  = dino_cfg.get("batch_size_anomaly", 64)
+        # window = num_patches × patch_len (must divide evenly). Defaults: 10 × 10 = 100.
+        _a_ps = patch_len   if patch_len   is not None else 10
+        _a_np = num_patches if num_patches is not None else (seq_len // _a_ps if seq_len else 10)
+        _a_win = _a_np * _a_ps
+
+        # downstream reconstruction loaders (StandardScaled sliding windows)
+        _ds_tr = AnomalyDataPuller(anom_dir, anomaly_dataset, _a_ps, win_size=_a_win, which="train")
+        _ds_te = AnomalyDataPuller(anom_dir, anomaly_dataset, _a_ps, win_size=_a_win, which="test")
+        n_vars = _ds_tr.n_vars
+        anom_train = torch.utils.data.DataLoader(_ds_tr, batch_size=anom_bs, shuffle=False)
+        anom_test  = torch.utils.data.DataLoader(_ds_te, batch_size=anom_bs, shuffle=False)
+
+        # Configure DINO for SSL-on-anomaly (seq_len drives pretrain + recon backbone)
+        dino_cfg['pretrain_anomaly_dataset'] = anomaly_dataset
+        dino_cfg['pretrain_source']          = None
+        dino_cfg['pretrain_val_fraction']    = pretrain_val_fraction
+        dino_cfg['c_in']        = n_vars
+        dino_cfg['seq_len']     = _a_win
+        dino_cfg['num_patches'] = _a_np
+        dino_cfg['patch_len']   = _a_ps
+        dino_cfg['step_size']   = _a_ps
+        _base = dino_cfg.get('output_dir', './checkpoints').rstrip('/')
+        if f"anompre_{anomaly_dataset}" not in _base:
+            dino_cfg['output_dir'] = str(
+                Path(_base).parent / 'anomaly' /
+                (Path(_base).name + f'_anompre_{anomaly_dataset}_cw{_a_win}'))
+
+        dino_main.cfg.update(dino_cfg)
+        args = _config_to_dino_args(dino_cfg)
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+        _anom_ratio = _get_anomaly_ratio(anomaly_dataset, dino_cfg)
+        print("\n" + "=" * 60)
+        print(f"  MODEL: DINO (tsdino_timemixer) — PRETRAIN ON ANOMALY DATA + FINE-TUNE")
+        print(f"  dataset: {anomaly_dataset}   n_vars={n_vars}  "
+              f"seq_len={_a_win} ({_a_np}×{_a_ps})   ratio={_anom_ratio}")
+        print(f"  output_dir: {args.output_dir}")
+        print("=" * 60)
+
+        if not skip_train:
+            print("\n[DINO] Pretraining on anomaly train stream …")
+            dino_main.train_TS_DINO(args)
+        else:
+            print("[DINO] skip_train=True — reusing existing checkpoint.")
+        _ckpt = os.path.join(args.output_dir, "checkpoint_best.pth")
+        if not os.path.exists(_ckpt):
+            _epochs_ckpts = sorted(Path(args.output_dir).glob("checkpoint*.pth"))
+            if _epochs_ckpts:
+                _ckpt = str(_epochs_ckpts[-1])
+            else:
+                raise FileNotFoundError(f"No pretrained checkpoint found in {args.output_dir}")
+
+        _tm_anom_spec = _ilu.spec_from_file_location(
+            "tsmixer_anomaly", dino_dir / "TSMixerAnomaly.py")
+        _tm_anom_mod  = _ilu.module_from_spec(_tm_anom_spec)
+        _tm_anom_spec.loader.exec_module(_tm_anom_mod)
+        dino_cfg["output_dir"] = args.output_dir
+
+        print(f"\n{'='*60}\n  [DINO] Anomaly fine-tune (encoder+decoder) on {anomaly_dataset}\n{'='*60}")
+        anom_result = _tm_anom_mod.anomaly_detection(
+            dino_cfg, "best", anom_train, anom_test,
+            anomaly_ratio=_anom_ratio,
+            linear_probe=False,                      # fine-tune encoder + decoder
+            mlp_head=(head_type == "mlp"),
+            checkpoint_path=_ckpt)
+
+        print(f"\n{'='*60}")
+        print(f"  SUMMARY — {anomaly_dataset} (pretrained on its own train stream, fine-tuned)")
+        if isinstance(anom_result, dict):
+            print("  " + "    ".join(
+                f"{k}: {v:.4f}" for k, v in anom_result.items()
+                if isinstance(v, (int, float))))
+        print(f"{'='*60}")
+        return anom_result
+
     pretrain_source = _resolve_pretrain_source(dino_cfg)
     use_global_data = pretrain_source is not None
 
@@ -819,15 +925,17 @@ def run_dino(skip_train: bool = False,
             AnomalyDataPuller(anom_dir, anomaly_dataset, p_s,
                               win_size=_seq_len, which="test"),
             batch_size=anom_bs, shuffle=False)
-        # Anomaly entry point is signature-identical across backbones; only the file differs:
-        #   timemixer → TSMixerAnomaly.py,  patchtst → Anomaly.py
+        # Same function name across backbones, but the FIRST arg type differs:
+        #   timemixer → TSMixerAnomaly.py, reads a cfg DICT (cfg["c_in"], cfg.get(...))
+        #   patchtst  → Anomaly.py,        reads an args NAMESPACE (args.c_in, args.num_patches)
         _anom_file = "TSMixerAnomaly.py" if backbone == "timemixer" else "Anomaly.py"
         _tm_spec = _ilu.spec_from_file_location("dino_anomaly", dino_dir / _anom_file)
         _tm_mod  = _ilu.module_from_spec(_tm_spec)
         _tm_spec.loader.exec_module(_tm_mod)
         dino_cfg["output_dir"] = args.output_dir
+        _anom_cfg = dino_cfg if backbone == "timemixer" else args
         anom_result = _tm_mod.anomaly_detection(
-            dino_cfg, _path_num, anom_train, anom_test,
+            _anom_cfg, _path_num, anom_train, anom_test,
             anomaly_ratio=_anom_ratio,
             linear_probe=linear_probe,
             mlp_head=(head_type == "mlp"))
@@ -1909,6 +2017,7 @@ def run(model: str,
         checkpoints=None,
         pretrain_only: bool = False,
         pretrain_on_classification: bool = False,
+        pretrain_on_anomaly: bool = False,
         pretrain_val_fraction: float = 0.1,
         epochs_classification: int = None,
         cls_head_mode: str = "both",
@@ -2029,6 +2138,7 @@ def run(model: str,
                   forecast_dataset=forecast_dataset)
     if 'pretrain_only'          in sig.parameters: kwargs['pretrain_only']          = pretrain_only
     if 'pretrain_on_classification' in sig.parameters: kwargs['pretrain_on_classification'] = pretrain_on_classification
+    if 'pretrain_on_anomaly'   in sig.parameters: kwargs['pretrain_on_anomaly']   = pretrain_on_anomaly
     if 'pretrain_val_fraction' in sig.parameters: kwargs['pretrain_val_fraction'] = pretrain_val_fraction
     if 'epochs_classification' in sig.parameters: kwargs['epochs_classification'] = epochs_classification
     if 'cls_head_mode'         in sig.parameters: kwargs['cls_head_mode']         = cls_head_mode
@@ -2128,6 +2238,14 @@ if __name__ == "__main__":
         help="DINO-pretrain on the classification dataset's TRAIN series (no labels), "
              "then run BOTH a linear probe and a full fine-tune from the same checkpoint. "
              "Requires --classification_dataset; backbone=timemixer only.",
+    )
+    parser.add_argument(
+        "--pretrain_on_anomaly", type=str, default="false",
+        choices=["true", "false"],
+        help="DINO-pretrain on the anomaly dataset's NORMAL (train) stream (no labels), "
+             "then fine-tune the reconstruction detector (encoder+decoder) from the same "
+             "checkpoint. Window = num_patches × patch_len (default 10×10=100). "
+             "Requires --anomaly_dataset; backbone=timemixer only.",
     )
     parser.add_argument(
         "--epochs_classification", type=int, default=None,
@@ -2289,6 +2407,7 @@ if __name__ == "__main__":
         forecast_dataset=args.forecast_dataset,
         pretrain_only=args.pretrain_only.lower() == "true",
         pretrain_on_classification=args.pretrain_on_classification.lower() == "true",
+        pretrain_on_anomaly=args.pretrain_on_anomaly.lower() == "true",
         pretrain_val_fraction=args.pretrain_val_fraction,
         epochs_classification=args.epochs_classification,
         cls_head_mode=args.cls_head_mode,

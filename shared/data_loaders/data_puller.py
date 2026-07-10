@@ -1235,3 +1235,79 @@ class AnomalyDataPuller(Dataset):
                 label = np.pad(label, (0, self.padded_T - len(label)))
             return torch.tensor(patches), torch.tensor(label)
         return torch.tensor(patches)
+
+
+class AnomalyPretrainPuller(Dataset):
+    """
+    Self-supervised (DINO) pretraining over an ANOMALY dataset's NORMAL (train)
+    stream. The reference ``train.npy`` is a single long ``[T, C]`` series of
+    normal behaviour; we normalise it with a StandardScaler fit on the train
+    portion and slice it into sliding windows of ``seq_len`` timesteps, each
+    passed through ``transform`` to yield DINO crops — the same ``[seq_len,
+    n_vars]`` contract as ClassificationPretrainPuller / PatchTSTPretrainAdapter.
+
+    Only the TRAIN stream is ever read (never test), so the encoder never sees the
+    evaluation series — no leakage into the downstream reconstruction/threshold.
+    An optional held-out val slice is carved from the TAIL of the train stream
+    (contiguous) so the SSL checkpoint can be picked by val loss; ``which`` selects
+    the 'train' or 'val' side. The carve is skipped (val empty) when the tail is
+    too short to hold a meaningful val set (``< max(seq_len, val_min)`` timesteps),
+    in which case the caller falls back to a final-epoch checkpoint.
+
+    ``seq_len`` must equal the downstream anomaly window (AnomalyDataPuller
+    ``win_size``) because the TSMixer PDM Linear layers are fixed to seq_len.
+    ``patch_size`` is accepted for signature symmetry with the classification
+    puller (the DINO transform operates on the whole ``[seq_len, C]`` window).
+    """
+
+    def __init__(self, data_dir: str, dataset: str, seq_len: int,
+                 patch_size: int, transform=None, which: str = 'train',
+                 step: int = None, val_fraction: float = 0.0, val_min: int = 32):
+        assert which in ('train', 'val')
+        self.seq_len   = int(seq_len)
+        self.transform = transform
+        self.step      = int(step) if step else max(1, self.seq_len // 2)
+        root = Path(data_dir) / dataset
+        if not root.exists():
+            raise FileNotFoundError(
+                f"Anomaly dataset not found: {root}\n"
+                f"Run prep_anomaly_data.py to generate it.")
+
+        X_tr = np.load(root / "train.npy", allow_pickle=True).astype(np.float32)
+        # normalise to 2D [T, C] (mirror AnomalyDataPuller's shape handling)
+        if X_tr.ndim == 3:
+            X_tr = X_tr.reshape(-1, X_tr.shape[-1])
+        if X_tr.ndim == 1:
+            X_tr = X_tr[:, None]
+        if X_tr.shape[0] < X_tr.shape[1]:
+            X_tr = X_tr.T
+
+        scaler = StandardScaler()
+        scaler.fit(X_tr)
+        X_tr = scaler.transform(X_tr).astype(np.float32)
+        self.n_vars = X_tr.shape[1]
+
+        # contiguous tail carve for the SSL val stream (best-checkpoint selection)
+        n_val_ts = int(round(len(X_tr) * float(val_fraction)))
+        if n_val_ts < max(self.seq_len, int(val_min)):
+            n_val_ts = 0
+        split = len(X_tr) - n_val_ts
+        self.data = X_tr[split:] if which == 'val' else X_tr[:split]
+
+        self._n = max(0, (len(self.data) - self.seq_len) // self.step + 1)
+        print(f"AnomalyPretrainPuller [{which}] ({dataset}): {self._n} windows "
+              f"(val_ts={n_val_ts}, step={self.step}) → "
+              f"seq_len {self.seq_len}, {self.n_vars} vars")
+
+    def __len__(self):
+        return self._n
+
+    def __getitem__(self, idx):
+        start  = idx * self.step
+        window = self.data[start:start + self.seq_len]           # [seq_len, C]
+        if window.shape[0] < self.seq_len:
+            window = np.pad(window, ((0, self.seq_len - window.shape[0]), (0, 0)))
+        x = torch.from_numpy(np.ascontiguousarray(window)).float()
+        if self.transform is not None:
+            x = self.transform(x)
+        return x

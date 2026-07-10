@@ -114,7 +114,8 @@ def train_TS_DINO(args):
     _synth_kwargs = dict(_shared_kwargs, window_step=cfg.get('window_step', None))
     # Pretrain directly on a classification dataset's TRAIN series (labels ignored).
     # Takes priority over every other source; c_in is inferred from the data.
-    _cls_pretrain_ds = cfg.get('pretrain_classification_dataset')
+    _cls_pretrain_ds  = cfg.get('pretrain_classification_dataset')
+    _anom_pretrain_ds = cfg.get('pretrain_anomaly_dataset')
     if _cls_pretrain_ds:
         print(f"Using classification dataset '{_cls_pretrain_ds}' (train series) for DINO pretraining")
         _shared_dir = str(Path(__file__).parent.parent / "shared")
@@ -134,6 +135,25 @@ def train_TS_DINO(args):
         combined_dataset = ClassificationPretrainPuller(which='train', **_cls_pre_kwargs)
         args.c_in = combined_dataset.n_vars   # backbone built with the dataset's var count
         print(f"Pretrain dataset: {len(combined_dataset)} series (c_in={args.c_in})")
+    elif _anom_pretrain_ds:
+        print(f"Using anomaly dataset '{_anom_pretrain_ds}' (train stream) for DINO pretraining")
+        _shared_dir = str(Path(__file__).parent.parent / "shared")
+        if _shared_dir not in sys.path:
+            sys.path.insert(0, _shared_dir)
+        from data_loaders.data_puller import AnomalyPretrainPuller
+        _anom_pre_kwargs = dict(
+            data_dir     = cfg['anomaly_data_dir'],
+            dataset      = _anom_pretrain_ds,
+            seq_len      = args.num_patches * args.patch_len,
+            patch_size   = args.patch_len,
+            transform    = dataAugmentationDino,
+            step         = cfg.get('window_step', None),
+            val_fraction = cfg.get('pretrain_val_fraction', 0.0),
+            val_min      = cfg.get('pretrain_val_min', 32),
+        )
+        combined_dataset = AnomalyPretrainPuller(which='train', **_anom_pre_kwargs)
+        args.c_in = combined_dataset.n_vars   # backbone built with the stream's var count
+        print(f"Pretrain dataset: {len(combined_dataset)} windows (c_in={args.c_in})")
     elif _pretrain_source in ('monash', 'monash+synthetic'):
         print("Using Monash dataset for DINO pretraining")
         combined_dataset = dpuller.MonashDataPuller(
@@ -148,8 +168,8 @@ def train_TS_DINO(args):
         print("Using Synthetic dataset for DINO pretraining")
         combined_dataset = dpuller.SyntheticArrowDataPuller(
             data_dir = cfg['synthetic_data_dir'], **_synth_kwargs)
-    if _cls_pretrain_ds:
-        pass   # combined_dataset already built from the classification series
+    if _cls_pretrain_ds or _anom_pretrain_ds:
+        pass   # combined_dataset already built from the classification/anomaly series
     elif _pretrain_source is not None:
         print(f"Pretrain dataset: {len(combined_dataset)} windows")
     elif 'UCI HAR' in args.data_path:
@@ -195,6 +215,9 @@ def train_TS_DINO(args):
         # Optional small held-out val carved from the train series (empty for
         # datasets too small to spare one → final epoch saved as checkpoint_best).
         val_dataset = ClassificationPretrainPuller(which='val', **_cls_pre_kwargs)
+    elif _anom_pretrain_ds:
+        # Held-out val carved from the TAIL of the anomaly train stream.
+        val_dataset = AnomalyPretrainPuller(which='val', **_anom_pre_kwargs)
     elif _pretrain_source in ('monash', 'monash+synthetic'):
         val_dataset = dpuller.MonashDataPuller(data_dir=cfg['monash_data_dir'], **_val_kwargs)
         if _pretrain_source == 'monash+synthetic':

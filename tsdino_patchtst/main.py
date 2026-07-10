@@ -1154,6 +1154,13 @@ def train_classification(args, classification_train=None, classification_val=Non
         ])
         print(f"  [DINO classify] head_lr={_head_lr_cls}  encoder_lr={_enc_lr_cls}")
 
+    # Remember each group's base LR so the cosine schedule below can scale groups
+    # relative to the head LR instead of flattening them all to one value.
+    # Default (linear probe, or fine-tune with encoder_lr == head_lr) → ratio 1.0,
+    # i.e. identical to the previous single-LR behaviour.
+    for _pg in optimizer.param_groups:
+        _pg['base_lr'] = _pg['lr']
+
     # Cosine learning rate scheduler
     lr_schedule = utils.cosine_scheduler(
         base_value=args.lr_classification,
@@ -1179,7 +1186,10 @@ def train_classification(args, classification_train=None, classification_val=Non
             # Update learning rate
             step = epoch * len(train_loader) + it
             for param_group in optimizer.param_groups:
-                param_group['lr'] = lr_schedule[step]
+                # Scale each group by its base LR relative to the head LR so a
+                # smaller encoder LR (discriminative fine-tuning) is preserved.
+                _ratio = param_group.get('base_lr', _head_lr_cls) / _head_lr_cls
+                param_group['lr'] = lr_schedule[step] * _ratio
 
             inputs, labels = inputs.to(device), labels.to(device)
             if padding_mask is not None:
