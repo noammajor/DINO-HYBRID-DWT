@@ -2192,7 +2192,13 @@ if __name__ == "__main__":
                         choices=["monash", "synthetic", "monash+synthetic"],
                         help="Override pretrain data source (dino only)")
     parser.add_argument("--num_patches",      type=int,   default=None,
-                        help="Override number of patches (context window = num_patches × patch_size)")
+                        help="Override number of patches (context window = num_patches × patch_size). "
+                             "Note: with --classification_dataset this relocates the checkpoint lookup "
+                             "to a classification/<name>_cw<cw> subdir. Use --seq_len to set the window "
+                             "size WITHOUT relocating (keeps the flat pretrain checkpoint dir).")
+    parser.add_argument("--seq_len",          type=int,   default=None,
+                        help="Context window in timesteps; sets num_patches = seq_len // patch_len "
+                             "without relocating the checkpoint dir (unlike --num_patches).")
     parser.add_argument("--embed_dim",           type=int, default=None,
                         help="Override embedding dim / d_model for the encoder")
     parser.add_argument("--predictor_embed_dim", type=int, default=None,
@@ -2299,6 +2305,7 @@ if __name__ == "__main__":
         lr_pred=args.lr_pred,
         pretrain_source=args.pretrain_source,
         num_patches=args.num_patches,
+        seq_len=args.seq_len,
         embed_dim=args.embed_dim,
         predictor_embed_dim=args.predictor_embed_dim,
         out_dim=args.out_dim,

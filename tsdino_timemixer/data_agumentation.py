@@ -450,6 +450,31 @@ class gaussian_blur:
         return out.squeeze(1).t()              # [seq_len, n_vars]
 
 
+class gaussian_noise:
+    """Pure additive Gaussian noise (SimCLR/DINO-style, no contrast/brightness).
+
+    Adds i.i.d. N(0, std^2) noise to every timestep/channel, with std drawn per
+    sample from std_range. Unlike jitter_contrast, this does NOT rescale or shift
+    the signal — it only perturbs it, so the global structure is preserved while
+    fine detail is corrupted. Data is expected pre-standardised, so std is absolute.
+
+    x: [seq_len, n_vars] → same shape.
+    """
+    def __init__(self, std_range=(0.05, 0.2)):
+        self.std_range = std_range
+
+    def __call__(self, x):
+        std = random.uniform(*self.std_range)
+        if std <= 0:
+            return x
+        return x + torch.randn_like(x) * std
+
+
+# DINO-vision "gaussiancrop" view = random crop (via spec crop_ratio) + this
+# additive Gaussian noise. Alias so the config type name reads as one recipe.
+gaussiancrop = gaussian_noise
+
+
 class jitter_contrast:
     """SimCLR color-jitter analog for 1D series.
 

@@ -113,6 +113,8 @@ config = {
     "boost_b_range":                (0.01, 0.3),
     "hyperbolic_warp_range":        (0.5,  1.5),
     "hyperbolic_shift_magnitude":   0.3,
+    "gaussian_noise_std_range":     (0.05, 0.2),   # pure additive N(0,std^2) noise (data is standardised)
+    "gaussian_blur_sigma_range":    (0.1,  2.0),
 
     # ── Augmentation views ────────────────────────────────────────────────────
     #
@@ -164,17 +166,34 @@ config = {
     #   "boost"            — additive linear time trend.  Override: b_range
     #   "hyperbolic_warp"  — tanh amplitude warp.         Override: warp_range
     #   "hyperbolic_geom"  — Poincaré-disk Möbius shift.  Override: shift_magnitude
+    #   "gaussian_noise"   — pure additive N(0,std^2) noise. Override: std_range
+    #   "gaussiancrop"     — DINO-vision view: crop (crop_ratio) + gaussian noise. Override: std_range
+    #   "gaussian_blur"    — 1D Gaussian smoothing.         Override: sigma_range
+    #   "jitter_contrast"  — noise + contrast + brightness. Override: jitter/contrast/brightness_range
+    #
+    #  NOTE: combine any type with a random crop via "crop_ratio" < 1.0 in the spec
+    #        (a RandomResizedCrop analog: sub-window then resized back to seq_len).
     #
     # ─────────────────────────────────────────────────────────────────────────
 
-    # ── Teacher view (global crop) ────────────────────────────────────────────
+    # ── Teacher views (global crops) ──────────────────────────────────────────
+    # DINO-vision recipe: 2 global crops (large view + mild Gaussian noise),
+    # seen by BOTH student and teacher.
     "global_crops": [
-        {"type": "dwt_soft_threshold", "crop_ratio": 1.0},
-    ], #changed from low_pass to soft_threshold --- low_pass caused teacher collapse on synthetic; re-testing stability on etth1
+        {"type": "gaussiancrop", "crop_ratio": 1.0, "std_range": (0.02, 0.10)},
+        {"type": "gaussiancrop", "crop_ratio": 1.0, "std_range": (0.02, 0.10)},
+    ],
 
-    # ── Student view (local crop) ─────────────────────────────────────────────
+    # ── Student views (local crops) ───────────────────────────────────────────
+    # 6 local crops: short sub-windows (RandomResizedCrop analog) + stronger
+    # Gaussian noise, seen by the student only.
     "local_crops": [
-        {"type": "dwt_hard", "crop_ratio": 1.0},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
+        {"type": "gaussiancrop", "crop_ratio": 0.4, "std_range": (0.10, 0.30)},
     ],
 
     # ── Patch reconstruction (MAE-style auxiliary loss) ────────────────────────

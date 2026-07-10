@@ -781,6 +781,8 @@ class DataAugmentationDino:
         'hyperbolic_geom':  aug.HyperBolicGeometry,
         # vision-style (1D adaptations)
         'gaussian_blur':    aug.gaussian_blur,
+        'gaussian_noise':   aug.gaussian_noise,
+        'gaussiancrop':     aug.gaussiancrop,   # crop (via crop_ratio) + gaussian noise
         'jitter_contrast':  aug.jitter_contrast,
     }
 
@@ -838,6 +840,8 @@ class DataAugmentationDino:
                         kwargs['shift_magnitude']= spec.get('shift_magnitude',dwt_cfg.get('hyperbolic_shift_magnitude', 0.3))
                     elif t == 'gaussian_blur':
                         kwargs['sigma_range']    = spec.get('sigma_range',    dwt_cfg.get('gaussian_blur_sigma_range', (0.1, 2.0)))
+                    elif t in ('gaussian_noise', 'gaussiancrop'):
+                        kwargs['std_range']      = spec.get('std_range',      dwt_cfg.get('gaussian_noise_std_range', (0.05, 0.2)))
                     elif t == 'jitter_contrast':
                         kwargs['jitter_range']     = spec.get('jitter_range',     dwt_cfg.get('jitter_range',     (0.0, 0.1)))
                         kwargs['contrast_range']   = spec.get('contrast_range',   dwt_cfg.get('contrast_range',   (0.7, 1.3)))
