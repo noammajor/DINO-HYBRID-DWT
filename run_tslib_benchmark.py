@@ -482,6 +482,31 @@ def run_classify(a, device):
 # ══════════════════════════════════════════════════════════════════════════════
 #  ANOMALY DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
+def _adjustment(gt, pred):
+    # Segment-level point adjustment (Xu et al.), matching the DINO anomaly eval
+    # in tsdino_timemixer/TSMixerAnomaly.py: if any point inside a true anomaly
+    # segment is flagged, the whole segment is counted as detected.
+    anomaly_state = False
+    for i in range(len(gt)):
+        if gt[i] == 1 and pred[i] == 1 and not anomaly_state:
+            anomaly_state = True
+            for j in range(i, 0, -1):
+                if gt[j] == 0:
+                    break
+                if pred[j] == 0:
+                    pred[j] = 1
+            for j in range(i, len(gt)):
+                if gt[j] == 0:
+                    break
+                if pred[j] == 0:
+                    pred[j] = 1
+        elif gt[i] == 0:
+            anomaly_state = False
+        if anomaly_state:
+            pred[i] = 1
+    return gt, pred
+
+
 def run_anomaly(a, device):
     from data_loaders.data_puller import AnomalyDataPuller
     from sklearn.metrics import precision_recall_fscore_support
@@ -526,7 +551,19 @@ def run_anomaly(a, device):
             losses.append(loss.item())
         print(f"  epoch {epoch+1}/{a.epochs}  loss={np.mean(losses):.4f}  ({time.time()-t0:.1f}s)")
 
-    model.eval(); scores, labels = [], []
+    model.eval()
+    # ── train energy (no labels) — for the combined threshold ──────────────────
+    train_energy = []
+    with torch.no_grad():
+        for batch in tr:
+            patches = batch.float().to(device)              # train split → bare tensor
+            bx = patches.reshape(patches.shape[0], -1, patches.shape[-1])
+            err = ((model(bx, None, None, None) - bx) ** 2).mean(dim=-1)   # [B,T]
+            train_energy.append(err.cpu().numpy())
+    train_energy = np.concatenate(train_energy).reshape(-1)
+
+    # ── test energy + labels ───────────────────────────────────────────────────
+    scores, labels = [], []
     with torch.no_grad():
         for batch in te:
             patches, lbl = batch[0].float().to(device), batch[1]
@@ -535,13 +572,17 @@ def run_anomaly(a, device):
             scores.append(err.cpu().numpy()); labels.append(lbl.numpy())
 
     scores = np.concatenate(scores).reshape(-1)
-    labels = np.concatenate(labels).reshape(-1)
-    thresh = np.percentile(scores, 100 - a.anomaly_ratio)
+    labels = np.concatenate(labels).reshape(-1).astype(int)
+    # Threshold on COMBINED train+test energy, then segment point-adjustment —
+    # matches tsdino_timemixer/TSMixerAnomaly.py so baselines are comparable.
+    thresh = np.percentile(
+        np.concatenate([train_energy, scores]), 100 - a.anomaly_ratio)
     preds  = (scores > thresh).astype(int)
+    labels, preds = _adjustment(labels, preds)
     prec, rec, f1, _ = precision_recall_fscore_support(
         labels, preds, average="binary", zero_division=0)
     print(f"  >> {a.model}  P={prec:.4f}  R={rec:.4f}  F1={f1:.4f}  "
-          f"(anomaly_ratio={a.anomaly_ratio}%)")
+          f"(anomaly_ratio={a.anomaly_ratio}%, point-adjusted, combined-threshold)")
     return {"precision": prec, "recall": rec, "f1": f1}
 
 
