@@ -638,6 +638,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['pretrain_anomaly_dataset'] = anomaly_dataset
         dino_cfg['pretrain_source']          = None
         dino_cfg['pretrain_val_fraction']    = pretrain_val_fraction
+        # Pure DINO by default (config default mlm_phi=0.75 → DINO+iBOT, which
+        # ~doubles memory and changes the masking/forward shapes). Honour an
+        # explicit --mlm_phi override if the caller set one.
+        dino_cfg['mlm_phi'] = mlm_phi if mlm_phi is not None else 0.0
         dino_cfg['c_in']        = n_vars
         dino_cfg['seq_len']     = _a_win
         dino_cfg['num_patches'] = _a_np

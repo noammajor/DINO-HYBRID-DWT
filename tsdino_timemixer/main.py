@@ -147,7 +147,9 @@ def train_TS_DINO(args):
             seq_len      = args.num_patches * args.patch_len,
             patch_size   = args.patch_len,
             transform    = dataAugmentationDino,
-            step         = cfg.get('window_step', None),
+            # Dense sliding stride for SSL — NOT the coarse forecasting window_step
+            # (e.g. 336), which would leave only a handful of 100-ts windows.
+            step         = cfg.get('anomaly_pretrain_step', None),
             val_fraction = cfg.get('pretrain_val_fraction', 0.0),
             val_min      = cfg.get('pretrain_val_min', 32),
         )
