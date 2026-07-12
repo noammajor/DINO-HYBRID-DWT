@@ -103,6 +103,11 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="etth1")
     p.add_argument("--ckpt", default="checkpoints_etth1_layers4_outdim1024_timemixer_grid_full_dino/checkpoint_best.pth")
+    p.add_argument("--ckpt_vision", default=None,
+                   help="Second checkpoint (vision-based pretrain, e.g. jitter/gaussian) to contrast "
+                        "against --ckpt. When given, an extra wavelet-vs-vision contrast figure is saved.")
+    p.add_argument("--label",        default="WINO-TS", help="Legend label for --ckpt (wavelet).")
+    p.add_argument("--label_vision", default="Vision",  help="Legend label for --ckpt_vision.")
     p.add_argument("--which", default="teacher", choices=["teacher", "student"])
     p.add_argument("--seq_len", type=int, default=None)
     p.add_argument("--window", type=int, default=0, help="which non-overlapping window index")
@@ -134,6 +139,19 @@ def main():
     T = attn.shape[1]
     os.makedirs(args.outdir, exist_ok=True)
     tag = f"{args.dataset}_{args.which}_w{args.window}"
+
+    # ── optional: second (vision-pretrained) model for the contrast figure ─────
+    attn_v = None
+    if args.ckpt_vision:
+        backbone_v = build_backbone(cfg, c_in, seq_len)
+        ckptv = args.ckpt_vision if os.path.isabs(args.ckpt_vision) else str(ROOT / args.ckpt_vision)
+        load_ckpt(backbone_v, ckptv, args.which)
+        attn_v = get_attn(backbone_v, win)    # [C, S]
+
+    def _norm_entropy(a):
+        """Concentration of an attention row in [0,1]: 0 = one spike, 1 = uniform."""
+        a = np.clip(a, 1e-12, None); a = a / a.sum()
+        return float(-(a * np.log(a)).sum() / np.log(len(a)))
 
     # ── 1) heatmap: channels × time ────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(11, 3.2))
@@ -174,6 +192,45 @@ def main():
     out2 = os.path.join(args.outdir, f"attn_map_{tag}_overlay.png")
     fig.savefig(out2, dpi=130); plt.close(fig)
     print(f"saved: {out2}")
+
+    # ── 2b) CONTRAST: wavelet vs vision attention over the same series ─────────
+    if attn_v is not None:
+        C_W, C_V = "#d62728", "#1f77b4"   # wavelet=red, vision=blue
+        fig, axes = plt.subplots(nrow, ncol, figsize=(6.5 * ncol, 2.2 * nrow), squeeze=False)
+        h_w, h_v = [], []
+        for c in range(c_in):
+            ax = axes[c // ncol][c % ncol]
+            ser = win[:, c]
+            if len(ser) != T:
+                ser = ser[np.linspace(0, len(ser) - 1, T).astype(int)]
+            ax.plot(tt, ser, color="0.6", lw=0.8)
+            ax2 = ax.twinx()
+            aw, av = attn[c], attn_v[c]
+            ew, ev = _norm_entropy(aw), _norm_entropy(av); h_w.append(ew); h_v.append(ev)
+            ax2.fill_between(tt, 0, aw, color=C_W, alpha=0.18)
+            ax2.plot(tt, aw, color=C_W, lw=1.3, label=args.label)
+            ax2.fill_between(tt, 0, av, color=C_V, alpha=0.12)
+            ax2.plot(tt, av, color=C_V, lw=1.3, ls="--", label=args.label_vision)
+            ax2.set_ylim(0, max(aw.max(), av.max()) * 1.15)
+            # lower normalized entropy H = more focused/structured attention
+            ax.set_title(f"{cols[c]}   (H: {args.label} {ew:.2f} vs {args.label_vision} {ev:.2f})",
+                         fontsize=8)
+            ax.tick_params(labelsize=7); ax2.tick_params(labelsize=7)
+        for j in range(c_in, nrow * ncol):
+            axes[j // ncol][j % ncol].axis("off")
+        _mw, _mv = float(np.mean(h_w)), float(np.mean(h_v))
+        handles, labels = axes[0][0].get_figure().axes[1].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper right", fontsize=9, ncol=2)
+        fig.suptitle(
+            f"Attention concentration — {args.dataset} ({args.which}):  "
+            f"mean H  {args.label}={_mw:.2f}  vs  {args.label_vision}={_mv:.2f}  "
+            f"(lower = more focused)", fontsize=11)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        out2b = os.path.join(args.outdir, f"attn_contrast_{tag}.png")
+        fig.savefig(out2b, dpi=130); plt.close(fig)
+        print(f"saved: {out2b}")
+        print(f"  mean normalized entropy: {args.label}={_mw:.3f}  {args.label_vision}={_mv:.3f}  "
+              f"(Δ={_mv - _mw:+.3f}; positive ⇒ {args.label} more focused)")
 
     # ── 3) per-variable, contrast-normalized (attention is near-uniform) ────
     if args.per_var:
