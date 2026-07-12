@@ -118,6 +118,15 @@ def _resample(ser, T):
     return ser[np.linspace(0, len(ser) - 1, T).astype(int)]
 
 
+def _norm_range(v, lo=-2.0, hi=2.0):
+    """Min-max scale v so its smallest value -> lo and largest -> hi."""
+    v = np.asarray(v, float)
+    vmin, vmax = v.min(), v.max()
+    if vmax - vmin < 1e-12:
+        return np.full_like(v, (lo + hi) / 2.0)
+    return lo + (hi - lo) * (v - vmin) / (vmax - vmin)
+
+
 def similarity(attn_c, ser):
     """attn_c: [T]; ser: series resampled to T. Returns dict of correlations."""
     sal = np.abs(ser - ser.mean())
@@ -134,8 +143,8 @@ def plot_variable(ser, a, name, dataset, which, outpath, sims):
     """3-panel figure: colored series / overlay / attention strip."""
     T = len(a)
     tt = np.arange(T)
-    ser_n = (ser - ser.mean()) / (ser.std() + 1e-8)
-    a_n = (a - a.min()) / (a.max() - a.min() + 1e-12)   # contrast-normalized for display
+    ser_n = _norm_range(ser, -2.0, 2.0)   # min-max scaled to [-2, +2]
+    a_n = _norm_range(a, -2.0, 2.0)        # attention on the same fixed band
 
     fig, (axA, axB, axC) = plt.subplots(
         3, 1, figsize=(11, 5.4), sharex=True,
@@ -156,8 +165,10 @@ def plot_variable(ser, a, name, dataset, which, outpath, sims):
     # (B) normalized overlay + correlation
     axB.plot(tt, ser_n, color="0.45", lw=1.2, label="series (norm)")
     axB.plot(tt, a_n, color="#d62728", lw=1.4, label="attention (norm)")
-    axB.fill_between(tt, 0, a_n, color="#d62728", alpha=0.15)
-    axB.set_ylabel("normalized")
+    axB.fill_between(tt, -2.0, a_n, color="#d62728", alpha=0.15)
+    axB.set_ylim(-2.2, 2.2)
+    axB.set_yticks([-2, -1, 0, 1, 2])
+    axB.set_ylabel("normalized [-2, 2]")
     txt = (f"corr(attn, signal) = {sims['signal']:+.2f}\n"
            f"corr(attn, |x-mean|) = {sims['saliency']:+.2f}\n"
            f"corr(attn, |dx|) = {sims['change']:+.2f}")
