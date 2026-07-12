@@ -265,6 +265,7 @@ def run_dino(skip_train: bool = False,
              window_stride: int = None,
              lr_forecasting: float = None,
              batch_size: int = None,
+             batch_size_forecast: int = None,
              tsmixer_e_layers: int = None,
              patch_len: int = None,
              backbone: str = "timemixer"):
@@ -390,6 +391,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['mlm_block_size'] = mlm_block_size
     if batch_size is not None:
         dino_cfg['batch_size_per_gpu'] = batch_size
+    if batch_size_forecast is not None:
+        dino_cfg['batch_size_forecast'] = batch_size_forecast
     if backbone_type is not None:
         dino_cfg['backbone_type'] = backbone_type
     if synthetic_data_dir is not None:
@@ -2067,6 +2070,7 @@ def run(model: str,
         mlm_mode: str = None,
         mlm_block_size: int = None,
         batch_size: int = None,
+        batch_size_forecast: int = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
         soft_threshold_sigma: float = None,
@@ -2197,6 +2201,7 @@ def run(model: str,
     if 'mlm_mode'              in sig.parameters: kwargs['mlm_mode']              = mlm_mode
     if 'mlm_block_size'        in sig.parameters: kwargs['mlm_block_size']        = mlm_block_size
     if 'batch_size'            in sig.parameters: kwargs['batch_size']            = batch_size
+    if 'batch_size_forecast'   in sig.parameters: kwargs['batch_size_forecast']   = batch_size_forecast
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
     if 'soft_threshold_sigma'  in sig.parameters: kwargs['soft_threshold_sigma']  = soft_threshold_sigma
@@ -2378,6 +2383,8 @@ if __name__ == "__main__":
                         help="MLM mixing weight: phi*DINO + (1-phi)*MLM (DINO only)")
     parser.add_argument("--batch_size", type=int,   default=None,
                         help="Override pretrain batch_size_per_gpu (e.g. lower for 21-ch weather)")
+    parser.add_argument("--batch_size_forecast", type=int, default=None,
+                        help="Override forecast batch size (e.g. lower for 321-ch electricity)")
     parser.add_argument("--mlm_block_size", type=int, default=None,
                         help="MLM/MAE masking granularity: mask contiguous spans of N timesteps "
                              "(8 = block masking ON; 1 = per-step masking OFF). Overrides config.")
@@ -2462,6 +2469,7 @@ if __name__ == "__main__":
         mlm_mode=args.mlm_mode,
         mlm_block_size=args.mlm_block_size,
         batch_size=args.batch_size,
+        batch_size_forecast=args.batch_size_forecast,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
         soft_threshold_sigma=args.soft_threshold_sigma,
