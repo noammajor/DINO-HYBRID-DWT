@@ -254,6 +254,7 @@ def run_dino(skip_train: bool = False,
              mlm_block_size: int = None,
              backbone_type: str = None,
              dwt_wavelet_pool: list = None,
+             soft_threshold_sigma: float = None,
              use_koleo: bool = None,
              koleo_weight: float = None,
              use_vicreg: bool = None,
@@ -400,6 +401,10 @@ def run_dino(skip_train: bool = False,
         dino_cfg['window_step']   = window_stride   # tsdino mains read 'window_step' for the arrow puller stride
     if dwt_wavelet_pool is not None:
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
+    if soft_threshold_sigma is not None:
+        # ρ (shrinkage ratio) for soft-threshold DWT/SWT/MODWT augmentation:
+        # threshold = ρ · max(|detail coeffs|) per level.
+        dino_cfg['dwt_soft_threshold_sigma'] = soft_threshold_sigma
     if use_koleo is not None:
         dino_cfg['use_koleo'] = use_koleo
     if koleo_weight is not None:
@@ -2064,6 +2069,7 @@ def run(model: str,
         batch_size: int = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
+        soft_threshold_sigma: float = None,
         use_koleo: bool = None,
         koleo_weight: float = None,
         use_vicreg: bool = None,
@@ -2193,6 +2199,7 @@ def run(model: str,
     if 'batch_size'            in sig.parameters: kwargs['batch_size']            = batch_size
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
+    if 'soft_threshold_sigma'  in sig.parameters: kwargs['soft_threshold_sigma']  = soft_threshold_sigma
     if 'use_koleo'             in sig.parameters: kwargs['use_koleo']             = use_koleo
     if 'koleo_weight'          in sig.parameters: kwargs['koleo_weight']          = koleo_weight
     if 'use_vicreg'            in sig.parameters: kwargs['use_vicreg']            = use_vicreg
@@ -2384,6 +2391,10 @@ if __name__ == "__main__":
     parser.add_argument("--patch_len", type=int, default=None,
                         help="Patch size for the PatchTST backbone (also sets stride = non-overlapping). "
                              "Overrides config patch_len (default 16). Must match at pretrain AND forecast/load time.")
+    parser.add_argument("--soft_threshold_sigma", type=float, default=None,
+                        help="ρ (shrinkage ratio) for soft-threshold DWT/SWT/MODWT augmentation: "
+                             "threshold = ρ·max(|detail coeffs|) per level (config default 0.6). "
+                             "Only affects *_soft_threshold aug types.")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="Wavelet pool for random-per-sample DWT aug (e.g. sym4 sym6 sym8)")
     parser.add_argument("--use_koleo", type=str, default=None,
@@ -2453,6 +2464,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
+        soft_threshold_sigma=args.soft_threshold_sigma,
         use_koleo=(args.use_koleo.lower() == "true") if args.use_koleo is not None else None,
         koleo_weight=args.koleo_weight,
         use_vicreg=(args.use_vicreg.lower() == "true") if args.use_vicreg is not None else None,
