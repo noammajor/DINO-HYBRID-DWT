@@ -137,9 +137,16 @@ def plot_variable(ser, a, name, dataset, which, outpath, sims):
     ser_n = (ser - ser.mean()) / (ser.std() + 1e-8)   # standard-scaled (z-score)
     a_n = (a - a.mean()) / (a.std() + 1e-8)            # attention, same z-score
 
-    fig, (axA, axB, axC) = plt.subplots(
-        3, 1, figsize=(11, 5.4), sharex=True,
-        gridspec_kw={"height_ratios": [3, 2, 0.7]})
+    # Dedicated colorbar column so all three plot axes share the SAME width and
+    # x-axis; panel B's colorbar slot is left empty.
+    fig = plt.figure(figsize=(11, 5.4))
+    gs = fig.add_gridspec(3, 2, width_ratios=[1, 0.018],
+                          height_ratios=[3, 2, 0.7], hspace=0.15, wspace=0.02)
+    axA = fig.add_subplot(gs[0, 0])
+    axB = fig.add_subplot(gs[1, 0], sharex=axA)
+    axC = fig.add_subplot(gs[2, 0], sharex=axA)
+    caxA = fig.add_subplot(gs[0, 1])
+    caxC = fig.add_subplot(gs[2, 1])
 
     # (A) series line colored by attention
     pts = np.array([tt, ser]).T.reshape(-1, 1, 2)
@@ -151,7 +158,9 @@ def plot_variable(ser, a, name, dataset, which, outpath, sims):
     axA.set_xlim(0, T - 1); axA.set_ylim(ser.min(), ser.max())
     axA.set_ylabel("value")
     axA.set_title(f"{dataset} · {name} — series colored by attention ({which})", fontsize=11)
-    cb = fig.colorbar(lc, ax=axA, pad=0.01); cb.set_label("attention", fontsize=8)
+    cb = fig.colorbar(lc, cax=caxA); cb.set_label("attention", fontsize=8)
+    cb.ax.tick_params(labelsize=7)
+    plt.setp(axA.get_xticklabels(), visible=False)
 
     # (B) normalized overlay + correlation
     axB.plot(tt, ser_n, color="0.45", lw=1.2, label="series (z-score)")
@@ -166,16 +175,16 @@ def plot_variable(ser, a, name, dataset, which, outpath, sims):
              fontsize=8, family="monospace",
              bbox=dict(boxstyle="round", fc="white", ec="0.7", alpha=0.85))
     axB.legend(loc="upper left", fontsize=8, framealpha=0.85)
+    plt.setp(axB.get_xticklabels(), visible=False)
 
     # (C) attention heat strip
     im = axC.imshow(a[None, :], aspect="auto", cmap="magma",
                     extent=[0, T - 1, 0, 1], vmin=a.min(), vmax=a.max(),
                     interpolation="nearest")
     axC.set_yticks([]); axC.set_xlabel("timestep")
-    fig.colorbar(im, ax=axC, pad=0.01).ax.tick_params(labelsize=7)
+    cbC = fig.colorbar(im, cax=caxC); cbC.ax.tick_params(labelsize=7)
 
-    fig.tight_layout()
-    fig.savefig(outpath, dpi=140); plt.close(fig)
+    fig.savefig(outpath, dpi=140, bbox_inches="tight"); plt.close(fig)
 
 
 def main():
