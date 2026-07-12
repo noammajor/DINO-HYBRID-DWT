@@ -138,7 +138,21 @@ def main():
     attn = get_attn(backbone, win)            # [C, S]
     T = attn.shape[1]
     os.makedirs(args.outdir, exist_ok=True)
-    tag = f"{args.dataset}_{args.which}_w{args.window}"
+
+    def _slug(p):
+        """Distinguishing suffix of a checkpoint dir (strips the common
+        checkpoints_<ds>_layers<L>_outdim<D>_ prefix)."""
+        name = Path(p).parent.name
+        i = name.find("outdim")
+        if i >= 0:
+            rest = name[i + len("outdim"):]        # e.g. '1024_aug_family_grid_full_dino_seed42'
+            j = rest.find("_")
+            if j >= 0:
+                return rest[j + 1:]                # 'aug_family_grid_full_dino_seed42'
+        return name
+
+    slug_w = _slug(ckpt)
+    tag = f"{args.dataset}_{args.which}_w{args.window}_{slug_w}"
 
     # ── optional: second (vision-pretrained) model for the contrast figure ─────
     attn_v = None
@@ -193,41 +207,40 @@ def main():
     fig.savefig(out2, dpi=130); plt.close(fig)
     print(f"saved: {out2}")
 
-    # ── 2b) CONTRAST: wavelet vs vision attention over the same series ─────────
+    # ── 2b) CONTRAST: wavelet vs vision, two heatmaps on a shared scale ────────
+    # Side-by-side channels×time maps. Shared vmin/vmax so wavelet's peaks light
+    # up while vision's near-uniform attention stays flat — the contrast is the
+    # point. Per-model mean normalized entropy H (lower = more focused) annotates it.
     if attn_v is not None:
-        C_W, C_V = "#d62728", "#1f77b4"   # wavelet=red, vision=blue
-        fig, axes = plt.subplots(nrow, ncol, figsize=(6.5 * ncol, 2.2 * nrow), squeeze=False)
-        h_w, h_v = [], []
-        for c in range(c_in):
-            ax = axes[c // ncol][c % ncol]
-            ser = win[:, c]
-            if len(ser) != T:
-                ser = ser[np.linspace(0, len(ser) - 1, T).astype(int)]
-            ax.plot(tt, ser, color="0.6", lw=0.8)
-            ax2 = ax.twinx()
-            aw, av = attn[c], attn_v[c]
-            ew, ev = _norm_entropy(aw), _norm_entropy(av); h_w.append(ew); h_v.append(ev)
-            ax2.fill_between(tt, 0, aw, color=C_W, alpha=0.18)
-            ax2.plot(tt, aw, color=C_W, lw=1.3, label=args.label)
-            ax2.fill_between(tt, 0, av, color=C_V, alpha=0.12)
-            ax2.plot(tt, av, color=C_V, lw=1.3, ls="--", label=args.label_vision)
-            ax2.set_ylim(0, max(aw.max(), av.max()) * 1.15)
-            # lower normalized entropy H = more focused/structured attention
-            ax.set_title(f"{cols[c]}   (H: {args.label} {ew:.2f} vs {args.label_vision} {ev:.2f})",
-                         fontsize=8)
-            ax.tick_params(labelsize=7); ax2.tick_params(labelsize=7)
-        for j in range(c_in, nrow * ncol):
-            axes[j // ncol][j % ncol].axis("off")
+        h_w = [_norm_entropy(attn[c])   for c in range(c_in)]
+        h_v = [_norm_entropy(attn_v[c]) for c in range(c_in)]
         _mw, _mv = float(np.mean(h_w)), float(np.mean(h_v))
-        handles, labels = axes[0][0].get_figure().axes[1].get_legend_handles_labels()
-        fig.legend(handles, labels, loc="upper right", fontsize=9, ncol=2)
+        vmax = max(float(attn.max()), float(attn_v.max()))
+        diff = attn - attn_v
+        dmax = float(np.abs(diff).max()) or 1e-9
+
+        fig, axs = plt.subplots(1, 3, figsize=(16, 0.55 * c_in + 1.6), sharey=True)
+        # panels 0,1: absolute maps on a shared scale; panel 2: signed difference
+        im0 = None
+        for ax, A, lab, H in [(axs[0], attn, args.label, _mw), (axs[1], attn_v, args.label_vision, _mv)]:
+            im0 = ax.imshow(A, aspect="auto", cmap="magma", vmin=0.0, vmax=vmax,
+                            extent=[0, T, c_in - 0.5, -0.5], interpolation="nearest")
+            ax.set_title(f"{lab}   (mean H={H:.2f})", fontsize=11)
+            ax.set_xlabel("timestep")
+        imd = axs[2].imshow(diff, aspect="auto", cmap="RdBu_r", vmin=-dmax, vmax=dmax,
+                            extent=[0, T, c_in - 0.5, -0.5], interpolation="nearest")
+        axs[2].set_title(f"{args.label} $-$ {args.label_vision}", fontsize=11)
+        axs[2].set_xlabel("timestep")
+        axs[0].set_yticks(range(c_in)); axs[0].set_yticklabels(cols, fontsize=8)
+        fig.colorbar(im0, ax=[axs[0], axs[1]], label="attention weight", fraction=0.02, pad=0.02)
+        fig.colorbar(imd, ax=axs[2], label=f"Δ (red ⇒ {args.label} higher)", fraction=0.04, pad=0.02)
         fig.suptitle(
-            f"Attention concentration — {args.dataset} ({args.which}):  "
-            f"mean H  {args.label}={_mw:.2f}  vs  {args.label_vision}={_mv:.2f}  "
-            f"(lower = more focused)", fontsize=11)
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-        out2b = os.path.join(args.outdir, f"attn_contrast_{tag}.png")
-        fig.savefig(out2b, dpi=130); plt.close(fig)
+            f"Attention comparison — {args.dataset} ({args.which}):  "
+            f"lower H = more focused  (mean-H Δ={_mv - _mw:+.2f})", fontsize=12)
+        out2b = os.path.join(
+            args.outdir,
+            f"attn_contrast_{args.dataset}_{args.which}_w{args.window}_{slug_w}_vs_{_slug(ckptv)}.png")
+        fig.savefig(out2b, dpi=140, bbox_inches="tight"); plt.close(fig)
         print(f"saved: {out2b}")
         print(f"  mean normalized entropy: {args.label}={_mw:.3f}  {args.label_vision}={_mv:.3f}  "
               f"(Δ={_mv - _mw:+.3f}; positive ⇒ {args.label} more focused)")
