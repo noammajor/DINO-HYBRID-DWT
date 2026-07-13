@@ -23,6 +23,7 @@ import argparse
 
 import numpy as np
 import torch
+import pywt
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -61,15 +62,36 @@ def main():
     p.add_argument("--rho_J", type=int, default=3, help="fixed level J for the ρ-sweep image")
     p.add_argument("--levels", nargs="+", type=int, default=[2, 3, 4])
     p.add_argument("--rho_fixed", type=float, default=0.6, help="fixed ρ for the J-sweep image")
+    p.add_argument("--manual", action="store_true",
+                   help="use --var/--window as given; default auto-picks the wiggliest (high-freq) channel")
+    p.add_argument("--n_scan", type=int, default=24, help="windows scanned when auto-picking")
     p.add_argument("--outdir", default=os.path.join(_ROOT, "vis", "aaai"))
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
+    def _hf_energy(series):
+        """detail-band energy — how much high-frequency structure the wavelet aug can act on."""
+        co = pywt.wavedec(series, args.wavelet, level=max(args.levels + [args.rho_J]))
+        return sum(float((c ** 2).sum()) for c in co[1:])
+
+    n_load = args.n_scan if not args.manual else max(args.window + 1, 4)
     samples, _, n_vars, col_names = load_windows(
-        args.dataset, args.data_dir, max(args.window + 1, 4), args.seq_len, 0, args.seed)
-    x = samples[args.window].float()            # [T, C]
-    v = args.var if args.var >= 0 else n_vars - 1
+        args.dataset, args.data_dir, n_load, args.seq_len, 0, args.seed)
+
+    if args.manual:
+        win_i = args.window
+        v = args.var if args.var >= 0 else n_vars - 1
+    else:
+        # pick the (window, channel) with the most high-frequency content so ρ/J are visible
+        best = max(((_hf_energy(samples[wi].numpy()[:, c]), wi, c)
+                    for wi in range(len(samples)) for c in range(n_vars)),
+                   key=lambda z: z[0])
+        _, win_i, v = best
+        print(f"auto-picked wiggliest: window={win_i}  channel={col_names[v]}  "
+              f"(HF energy={best[0]:.1f}) — pass --manual to override")
+
+    x = samples[win_i].float()                  # [T, C]
     orig = x[:, v].numpy()
     T = len(orig); t = np.arange(T)
     ch = col_names[v]
