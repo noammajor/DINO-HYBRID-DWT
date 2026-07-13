@@ -39,8 +39,15 @@ import matplotlib.pyplot as plt
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+# visualize_augmentations (two dirs deep) mis-computes the repo root, so seed the
+# real paths first — TimeMixer models, repo root, then tsdino_timemixer LAST so its
+# models/ + data_agumentation win.
+for _p in (os.path.join(_ROOT, "TimeMixer-main", "models"),
+           os.path.join(_ROOT, "TimeMixer-main"),
+           _ROOT, _HERE,
+           os.path.join(_ROOT, "tsdino_timemixer")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from visualize_augmentations import (              # noqa: E402
     load_windows, load_backbone, get_tokens, token_rel_l2,
