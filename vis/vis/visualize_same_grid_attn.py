@@ -117,13 +117,20 @@ def main():
 
     colors = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd"]
     styles = ["-", "--", "-.", ":"]
-    fig, ax = plt.subplots(figsize=(10.5, 4.4))
+    strip_cmaps = ["Reds", "Blues", "Greens", "Purples"]   # WINO=red map, Jitter=blue map
+    nstr = len(backbones)
+
+    # top: overlaid z-scored curves.  below: one matching attention-map strip per model.
+    fig, axes = plt.subplots(
+        1 + nstr, 1, figsize=(11, 4.6 + 0.85 * nstr),
+        gridspec_kw={"height_ratios": [4] + [0.55] * nstr}, sharex=True)
+    axes = np.atleast_1d(axes)
+    ax = axes[0]
     if not args.no_series:
         ax.plot(t, _z(ser), color="0.55", lw=1.4, alpha=0.8, label="Input series", zorder=1)
     for mi, lab in enumerate(labels):
         ax.plot(t, _z(sal[mi]), color=colors[mi % len(colors)], ls=styles[mi % len(styles)],
                 lw=2.2, label=f"{lab} attn", zorder=3)
-    ax.set_xlabel("timestep", fontsize=12)
     ax.set_ylabel("standardized (z-score)", fontsize=12)
     ax.set_title(f"Attention maps on a shared grid — {args.dataset} · {col_names[v]}", fontsize=13)
     if corr is not None:
@@ -131,10 +138,22 @@ def main():
                 ha="right", va="bottom", fontsize=11,
                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.6", alpha=0.9))
     ax.grid(alpha=0.2)
-    ax.legend(frameon=False, fontsize=11, ncol=len(labels) + (0 if args.no_series else 1), loc="upper center")
+    ax.legend(frameon=False, fontsize=11, ncol=nstr + (0 if args.no_series else 1), loc="upper center")
     ax.tick_params(labelsize=10)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
+
+    # matching attention-map strips (each min-max normalised so its pattern shows)
+    for mi in range(nstr):
+        axs = axes[1 + mi]
+        a = sal[mi]
+        axs.imshow(a[None, :], aspect="auto", cmap=strip_cmaps[mi % len(strip_cmaps)],
+                   extent=[0, T, 0, 1], vmin=float(a.min()), vmax=float(a.max()),
+                   interpolation="bilinear")
+        axs.set_yticks([])
+        axs.set_ylabel(labels[mi], rotation=0, ha="right", va="center",
+                       fontsize=10, color=colors[mi % len(colors)])
+    axes[-1].set_xlabel("timestep", fontsize=12)
     fig.tight_layout()
     out = os.path.join(args.outdir, f"same_grid_attn_map_{args.dataset}_{col_names[v]}.png")
     fig.savefig(out, dpi=160, bbox_inches="tight"); plt.close(fig)
