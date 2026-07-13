@@ -16,14 +16,14 @@ import numpy as np
 import shutil
 import random
 from torch.nn.parallel import DistributedDataParallel
-try:  # tensorboardX only drives optional loss logging; stub it if unavailable
-    from tensorboardX import SummaryWriter
-except Exception:
-    class SummaryWriter:  # no-op fallback
-        def __init__(self, *a, **k): pass
-        def add_scalars(self, *a, **k): pass
-        def add_scalar(self, *a, **k): pass
-        def close(self, *a, **k): pass
+# tensorboardX logging is optional AND buggy here (TimeSiam passes leading-slash
+# tags like "/pretrain_loss", which makes tensorboardX try to mkdir at the FS root
+# -> PermissionError). We don't use tensorboard, so force a no-op writer.
+class SummaryWriter:  # no-op
+    def __init__(self, *a, **k): pass
+    def add_scalars(self, *a, **k): pass
+    def add_scalar(self, *a, **k): pass
+    def close(self, *a, **k): pass
 warnings.filterwarnings('ignore')
 
 
