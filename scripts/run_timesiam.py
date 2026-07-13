@@ -38,6 +38,27 @@ FREQ = {"etth1": "h", "etth2": "h", "ettm1": "t", "ettm2": "t"}
 ALL_DATASETS = ["etth1", "etth2", "ettm1", "ettm2", "weather", "electricity",
                 "exchange", "solar", "traffic", "aqshunyi", "aqwan", "czelan", "pm2_5"]
 
+# ── TimeSiam paper defaults for the PatchTST backbone ──────────────────────────
+# Extracted verbatim from TimeSiam-main/scripts/TimeSiam/ETT_script/PatchTST_*.sh.
+# The paper only provides PatchTST configs for the four ETT datasets; every other
+# dataset falls back to `_default` (PatchTST-standard, NOT a paper value — flagged
+# at runtime). Common paper knobs: mask_rate 0.25, sampling_range 6,
+# lineage_tokens 2, train_epochs 50, representation_using 'avg', factor 3,
+# patch_len/stride 12, label_len 48.
+PATCHTST_PAPER = {
+    "etth1":       dict(e_layers=1, d_model=512, d_ff=1024, n_heads=8, head_dropout=0.2),
+    "etth2":       dict(e_layers=3, d_model=512, d_ff=2048, n_heads=8, head_dropout=0.3),
+    "ettm1":       dict(e_layers=2, d_model=256, d_ff=1024, n_heads=8, head_dropout=0.1),
+    "ettm2":       dict(e_layers=1, d_model=128, d_ff=128,  n_heads=8, head_dropout=0.2),
+    "weather":     dict(e_layers=2, d_model=512, d_ff=2048, n_heads=4, head_dropout=0.1),
+    "electricity": dict(e_layers=2, d_model=512, d_ff=2048, n_heads=8, head_dropout=0.0),
+    "exchange":    dict(e_layers=2, d_model=512, d_ff=2048, n_heads=8, head_dropout=0.0),
+    "traffic":     dict(e_layers=3, d_model=128, d_ff=256,  n_heads=8, head_dropout=0.0),
+    "_default":    dict(e_layers=2, d_model=128, d_ff=256,  n_heads=8, head_dropout=0.1),  # NOT paper
+}
+# representation_using is backbone-specific in the paper: PatchTST=avg, iTransformer=concat.
+PAPER_REPR = {"PatchTST": "avg", "iTransformer": "concat"}
+
 
 def _ts_key(ds):
     return ETT_KEY.get(ds, "custom")
@@ -62,16 +83,15 @@ def main():
                     help="TimeSiam encoder backbone (iTransformer, PatchTST, DLinear, ...)")
     ap.add_argument("--seq_len", type=int, default=None,
                     help="context length; default = our num_patches*patch_len (336)")
-    ap.add_argument("--pretrain_epochs", type=int, default=50)
-    ap.add_argument("--e_layers", type=int, default=1)
-    ap.add_argument("--d_model", type=int, default=512)
-    ap.add_argument("--d_ff", type=int, default=512)
-    ap.add_argument("--mask_rate", type=float, default=0.25)
-    ap.add_argument("--sampling_range", type=int, default=6)
-    ap.add_argument("--lineage_tokens", type=int, default=2)
+    ap.add_argument("--pretrain_epochs", type=int, default=50)   # paper default
+    ap.add_argument("--mask_rate", type=float, default=0.25)      # paper default
+    ap.add_argument("--sampling_range", type=int, default=6)      # paper default
+    ap.add_argument("--lineage_tokens", type=int, default=2)      # paper default
     ap.add_argument("--gpu", type=int, default=0)
     ap.add_argument("--dry_run", action="store_true")
     a = ap.parse_args()
+
+    repr_using = PAPER_REPR.get(a.backbone, "avg")
 
     datasets = ALL_DATASETS if a.datasets == ["all"] else a.datasets
     # default context length = our 336 (21 patches x 16)
@@ -90,17 +110,27 @@ def main():
         logdir = ROOT / "logs" / "timesiam" / ds
         ckpt = f"./outputs/pretrain_checkpoints/{mid}/ckpt_best.pth"
 
+        # per-dataset paper config (PatchTST). ETT are verbatim from the paper;
+        # everything else uses `_default` (NOT a paper value — flagged below).
+        cfg = PATCHTST_PAPER.get(ds, PATCHTST_PAPER["_default"])
+        is_paper = ds in PATCHTST_PAPER
+        tag = "PAPER" if is_paper else "FALLBACK (no PatchTST paper config)"
+
         common = [
             "--root_path", DATA_DIR + ("" if DATA_DIR.endswith("/") else "/"),
             "--data_path", csv, "--model_id", mid, "--model", a.backbone,
             "--data", key, "--features", "M", "--freq", freq,
             "--seq_len", str(seq_len),
             "--enc_in", str(c_in), "--dec_in", str(c_in), "--c_out", str(c_in),
-            "--e_layers", str(a.e_layers), "--d_model", str(a.d_model), "--d_ff", str(a.d_ff),
+            "--e_layers", str(cfg["e_layers"]), "--d_model", str(cfg["d_model"]),
+            "--d_ff", str(cfg["d_ff"]), "--n_heads", str(cfg["n_heads"]), "--factor", "3",
             "--gpu", str(a.gpu),
         ]
 
-        print(f"\n{'='*70}\n  TimeSiam | {ds} | {a.backbone} | c_in={c_in} | seq_len={seq_len} | data={key}\n{'='*70}")
+        print(f"\n{'='*70}\n  TimeSiam | {ds} | {a.backbone} | c_in={c_in} | seq_len={seq_len} | "
+              f"data={key} | cfg={tag}\n"
+              f"  e_layers={cfg['e_layers']} d_model={cfg['d_model']} d_ff={cfg['d_ff']} "
+              f"head_dropout={cfg['head_dropout']} repr={repr_using}\n{'='*70}")
 
         # ── (1) pretrain ──────────────────────────────────────────────────────
         pre = ["python", "-u", "run.py", "--task_name", "timesiam", "--is_training", "0",
@@ -116,7 +146,8 @@ def main():
             ft = ["python", "-u", "run.py", "--task_name", "fine_tune", "--is_training", "1",
                   *common, "--label_len", "48", "--pred_len", str(pl),
                   "--lineage_tokens", str(a.lineage_tokens),
-                  "--representation_using", "concat", "--load_checkpoints", ckpt]
+                  "--head_dropout", str(cfg["head_dropout"]),
+                  "--representation_using", repr_using, "--load_checkpoints", ckpt]
             _run(ft, logdir / f"forecast_pl{pl}.log", a.dry_run)
 
     print("\nDONE.  logs -> logs/timesiam/<dataset>/")
