@@ -3,7 +3,10 @@ import torch.nn as nn
 import numpy as np
 from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
-from reformer_pytorch import LSHSelfAttention
+try:  # only used by ReformerLayer (unused by PatchTST/iTransformer); guard if missing
+    from reformer_pytorch import LSHSelfAttention
+except Exception:
+    LSHSelfAttention = None
 
 
 class DSAttention(nn.Module):

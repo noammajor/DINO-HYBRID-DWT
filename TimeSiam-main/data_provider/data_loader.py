@@ -16,7 +16,10 @@ except Exception:
 import warnings
 from sklearn.preprocessing import StandardScaler
 import random
-from statsmodels.tsa.stattools import adfuller
+try:  # unused in these loaders; guarded so a missing statsmodels doesn't block imports
+    from statsmodels.tsa.stattools import adfuller
+except Exception:
+    adfuller = None
 import math
 warnings.filterwarnings('ignore')
 

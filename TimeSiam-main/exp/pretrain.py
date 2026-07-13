@@ -14,10 +14,16 @@ import time
 import warnings
 import numpy as np
 import shutil
-from tensorboardX import SummaryWriter
 import random
 from torch.nn.parallel import DistributedDataParallel
-from tensorboardX import SummaryWriter
+try:  # tensorboardX only drives optional loss logging; stub it if unavailable
+    from tensorboardX import SummaryWriter
+except Exception:
+    class SummaryWriter:  # no-op fallback
+        def __init__(self, *a, **k): pass
+        def add_scalars(self, *a, **k): pass
+        def add_scalar(self, *a, **k): pass
+        def close(self, *a, **k): pass
 warnings.filterwarnings('ignore')
 
 
