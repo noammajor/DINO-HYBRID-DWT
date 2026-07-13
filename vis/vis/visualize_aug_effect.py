@@ -58,8 +58,9 @@ def main():
     p.add_argument("--seq_len", type=int, default=336)
     p.add_argument("--wavelet", default="sym4")
     p.add_argument("--rhos", nargs="+", type=float, default=[0.2, 0.4, 0.6, 0.8, 1.0])
+    p.add_argument("--rho_J", type=int, default=3, help="fixed level J for the ρ-sweep image")
     p.add_argument("--levels", nargs="+", type=int, default=[2, 3, 4])
-    p.add_argument("--rho_fixed", type=float, default=0.6)
+    p.add_argument("--rho_fixed", type=float, default=0.6, help="fixed ρ for the J-sweep image")
     p.add_argument("--outdir", default=os.path.join(_ROOT, "vis", "aaai"))
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
@@ -73,25 +74,29 @@ def main():
     T = len(orig); t = np.arange(T)
     ch = col_names[v]
 
-    # ── 1) ρ sweep, one image per level J ─────────────────────────────────────
+    # ── 1) ρ sweep at fixed J (0.6 = ours, highlighted) — one image ────────────
     cmap = plt.cm.viridis
-    for J in args.levels:
-        fig, ax = plt.subplots(figsize=(10, 4.2))
-        ax.plot(t, orig, color="0.25", lw=2.0, label="original", zorder=5)
-        for i, rho in enumerate(args.rhos):
-            aug = DWTAugmentation(wavelet=args.wavelet, level=J, mode="soft_threshold",
-                                  soft_threshold_sigma=float(rho))
-            ax.plot(t, _apply(aug, x, v), color=cmap(i / max(len(args.rhos) - 1, 1)),
-                    lw=1.6, alpha=0.9, label=f"ρ={rho:g}")
-        ax.set_title(f"Soft-threshold easy view — effect of shrinkage ρ  (J={J}) — {args.dataset}·{ch}",
-                     fontsize=12)
-        ax.set_xlabel("timestep"); ax.set_ylabel("value")
-        ax.legend(frameon=False, ncol=len(args.rhos) + 1, fontsize=9, loc="upper center")
-        for sp in ("top", "right"):
-            ax.spines[sp].set_visible(False)
-        fig.tight_layout()
-        out = os.path.join(args.outdir, f"aug_rho_J{J}_{args.dataset}_{ch}.png")
-        fig.savefig(out, dpi=160); plt.close(fig); print(f"saved: {out}")
+    fig, ax = plt.subplots(figsize=(10, 4.2))
+    ax.plot(t, orig, color="0.25", lw=2.0, label="original", zorder=6)
+    for i, rho in enumerate(args.rhos):
+        aug = DWTAugmentation(wavelet=args.wavelet, level=args.rho_J, mode="soft_threshold",
+                              soft_threshold_sigma=float(rho))
+        y = _apply(aug, x, v)
+        ours = abs(rho - 0.6) < 1e-9
+        ax.plot(t, y,
+                color="#d62728" if ours else cmap(i / max(len(args.rhos) - 1, 1)),
+                lw=2.8 if ours else 1.5, alpha=0.95 if ours else 0.85,
+                zorder=5 if ours else 3,
+                label=f"ρ={rho:g} (ours)" if ours else f"ρ={rho:g}")
+    ax.set_title(f"Soft-threshold easy view — effect of shrinkage ρ  (J={args.rho_J}) — {args.dataset}·{ch}",
+                 fontsize=12)
+    ax.set_xlabel("timestep"); ax.set_ylabel("value")
+    ax.legend(frameon=False, ncol=len(args.rhos) + 1, fontsize=9, loc="upper center")
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    fig.tight_layout()
+    out = os.path.join(args.outdir, f"aug_rho_J{args.rho_J}_{args.dataset}_{ch}.png")
+    fig.savefig(out, dpi=160); plt.close(fig); print(f"saved: {out}")
 
     # ── 2) level J sweep (ρ fixed) ────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 4.2))
