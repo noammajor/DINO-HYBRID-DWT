@@ -62,7 +62,7 @@ def main():
     p.add_argument("--window", type=int, default=0)
     p.add_argument("--seq_len", type=int, default=336)
     p.add_argument("--no_series", action="store_true", help="omit the input-series trace")
-    p.add_argument("--smooth", type=int, default=1, help="odd moving-avg window to de-noise saliency (1=off)")
+    p.add_argument("--smooth", type=int, default=11, help="odd moving-avg window to de-noise saliency (1=off)")
     p.add_argument("--outdir", default=os.path.join(_ROOT, "vis", "maps"))
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
@@ -104,11 +104,16 @@ def main():
     def _smooth(a):
         k = args.smooth
         if k and k > 1:
-            ker = np.ones(k) / k
-            return np.convolve(a, ker, mode="same")
+            k = k + 1 if k % 2 == 0 else k              # force odd
+            pad = k // 2
+            ap = np.pad(a, pad, mode="reflect")         # reflect edges → no zero-pad artefacts
+            return np.convolve(ap, np.ones(k) / k, mode="valid")[:len(a)]
         return a
 
     sal = [_smooth(grad_saliency(bb, samples[args.window], device)[v]) for bb in backbones]
+
+    # Pearson r between the two attention shapes (on the smoothed, plotted signals)
+    corr = float(np.corrcoef(_z(sal[0]), _z(sal[1]))[0, 1]) if len(sal) >= 2 else None
 
     colors = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd"]
     styles = ["-", "--", "-.", ":"]
@@ -121,6 +126,10 @@ def main():
     ax.set_xlabel("timestep", fontsize=12)
     ax.set_ylabel("standardized (z-score)", fontsize=12)
     ax.set_title(f"Attention maps on a shared grid — {args.dataset} · {col_names[v]}", fontsize=13)
+    if corr is not None:
+        ax.text(0.985, 0.03, f"Pearson $r$ = {corr:+.2f}", transform=ax.transAxes,
+                ha="right", va="bottom", fontsize=11,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.6", alpha=0.9))
     ax.grid(alpha=0.2)
     ax.legend(frameon=False, fontsize=11, ncol=len(labels) + (0 if args.no_series else 1), loc="upper center")
     ax.tick_params(labelsize=10)
