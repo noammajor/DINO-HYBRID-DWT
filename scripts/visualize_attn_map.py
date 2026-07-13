@@ -99,6 +99,22 @@ def get_attn(backbone, window):
     return w[:, 0, :].cpu().numpy()    # [C, S]
 
 
+@torch.no_grad()
+def get_saliency(backbone, window):
+    """Per-timestep token saliency [C, T] = magnitude of each pre-pooling token.
+    TimeMixer's global_attn pooling weights are near-uniform, so a timestep's real
+    influence on the pooled embedding is its token magnitude ‖value_t‖ — which IS
+    non-uniform and differs across pre-training recipes (unlike the attention)."""
+    x = torch.from_numpy(window).float().unsqueeze(0)     # [1, T, C]
+    tok = backbone.forward_ibot(x)                        # [1, T, C, d]
+    s = tok[0].norm(dim=-1)                               # [T, C]
+    return s.transpose(0, 1).cpu().numpy()               # [C, T]
+
+
+def _signal(backbone, window, kind):
+    return get_saliency(backbone, window) if kind == "saliency" else get_attn(backbone, window)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="etth1")
@@ -108,6 +124,9 @@ def main():
                         "against --ckpt. When given, an extra wavelet-vs-vision contrast figure is saved.")
     p.add_argument("--label",        default="WINO-TS", help="Legend label for --ckpt (wavelet).")
     p.add_argument("--label_vision", default="Vision",  help="Legend label for --ckpt_vision.")
+    p.add_argument("--signal", default="saliency", choices=["saliency", "attn"],
+                   help="What to plot: 'saliency' (per-timestep token magnitude — discriminative; "
+                        "default) or 'attn' (raw global_attn pooling weights — near-uniform).")
     p.add_argument("--which", default="teacher", choices=["teacher", "student"])
     p.add_argument("--seq_len", type=int, default=None)
     p.add_argument("--window", type=int, default=0, help="which non-overlapping window index")
@@ -135,7 +154,7 @@ def main():
     ckpt = args.ckpt if os.path.isabs(args.ckpt) else str(ROOT / args.ckpt)
     load_ckpt(backbone, ckpt, args.which)
 
-    attn = get_attn(backbone, win)            # [C, S]
+    attn = _signal(backbone, win, args.signal)   # [C, S]
     T = attn.shape[1]
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -160,7 +179,7 @@ def main():
         backbone_v = build_backbone(cfg, c_in, seq_len)
         ckptv = args.ckpt_vision if os.path.isabs(args.ckpt_vision) else str(ROOT / args.ckpt_vision)
         load_ckpt(backbone_v, ckptv, args.which)
-        attn_v = get_attn(backbone_v, win)    # [C, S]
+        attn_v = _signal(backbone_v, win, args.signal)   # [C, S]
 
     def _norm_entropy(a):
         """Concentration of an attention row in [0,1]: 0 = one spike, 1 = uniform."""
@@ -207,36 +226,39 @@ def main():
     fig.savefig(out2, dpi=130); plt.close(fig)
     print(f"saved: {out2}")
 
-    # ── 2b) CONTRAST: wavelet vs vision, two heatmaps on a shared scale ────────
-    # Side-by-side channels×time maps. Shared vmin/vmax so wavelet's peaks light
-    # up while vision's near-uniform attention stays flat — the contrast is the
-    # point. Per-model mean normalized entropy H (lower = more focused) annotates it.
+    # ── 2b) CONTRAST: side-by-side per-channel overlays (the "second figure"
+    #        style, doubled). Left column = wavelet, right column = vision.
+    #        Each panel: series + that model's attention fill, autoscaled per
+    #        channel so its structure is visible even though the global weights
+    #        are near-uniform. Reader compares left vs right row by row.
     if attn_v is not None:
-        h_w = [_norm_entropy(attn[c])   for c in range(c_in)]
-        h_v = [_norm_entropy(attn_v[c]) for c in range(c_in)]
-        _mw, _mv = float(np.mean(h_w)), float(np.mean(h_v))
-        vmax = max(float(attn.max()), float(attn_v.max()))
-        diff = attn - attn_v
-        dmax = float(np.abs(diff).max()) or 1e-9
-
-        fig, axs = plt.subplots(1, 3, figsize=(16, 0.55 * c_in + 1.6), sharey=True)
-        # panels 0,1: absolute maps on a shared scale; panel 2: signed difference
-        im0 = None
-        for ax, A, lab, H in [(axs[0], attn, args.label, _mw), (axs[1], attn_v, args.label_vision, _mv)]:
-            im0 = ax.imshow(A, aspect="auto", cmap="magma", vmin=0.0, vmax=vmax,
-                            extent=[0, T, c_in - 0.5, -0.5], interpolation="nearest")
-            ax.set_title(f"{lab}   (mean H={H:.2f})", fontsize=11)
-            ax.set_xlabel("timestep")
-        imd = axs[2].imshow(diff, aspect="auto", cmap="RdBu_r", vmin=-dmax, vmax=dmax,
-                            extent=[0, T, c_in - 0.5, -0.5], interpolation="nearest")
-        axs[2].set_title(f"{args.label} $-$ {args.label_vision}", fontsize=11)
-        axs[2].set_xlabel("timestep")
-        axs[0].set_yticks(range(c_in)); axs[0].set_yticklabels(cols, fontsize=8)
-        fig.colorbar(im0, ax=[axs[0], axs[1]], label="attention weight", fraction=0.02, pad=0.02)
-        fig.colorbar(imd, ax=axs[2], label=f"Δ (red ⇒ {args.label} higher)", fraction=0.04, pad=0.02)
+        C_W, C_V = "#d62728", "#1f77b4"   # wavelet=red, vision=blue
+        fig, axes = plt.subplots(c_in, 2, figsize=(11, 1.7 * c_in), squeeze=False, sharex=True)
+        for c in range(c_in):
+            ser = win[:, c]
+            if len(ser) != T:
+                ser = ser[np.linspace(0, len(ser) - 1, T).astype(int)]
+            for col, (A, cc) in enumerate([(attn, C_W), (attn_v, C_V)]):
+                ax = axes[c][col]
+                ax.plot(tt, ser, color="0.55", lw=0.8)
+                ax2 = ax.twinx()
+                a = A[c]
+                ax2.fill_between(tt, 0, a, color=cc, alpha=0.30)
+                ax2.plot(tt, a, color=cc, lw=1.1)
+                ax2.set_ylim(0, max(a.max() * 1.15, 1e-9)); ax2.set_yticks([])
+                ax.tick_params(labelsize=7)
+            axes[c][0].set_ylabel(cols[c], fontsize=8)
+        axes[0][0].set_title(args.label, fontsize=12, color=C_W)
+        axes[0][1].set_title(args.label_vision, fontsize=12, color=C_V)
+        for col in (0, 1):
+            axes[c_in - 1][col].set_xlabel("timestep", fontsize=8)
+        _mw = float(np.mean([_norm_entropy(attn[c])   for c in range(c_in)]))
+        _mv = float(np.mean([_norm_entropy(attn_v[c]) for c in range(c_in)]))
         fig.suptitle(
-            f"Attention comparison — {args.dataset} ({args.which}):  "
-            f"lower H = more focused  (mean-H Δ={_mv - _mw:+.2f})", fontsize=12)
+            f"Attention over time — {args.dataset} ({args.which}):  "
+            f"{args.label} vs {args.label_vision}   (mean H {_mw:.2f} vs {_mv:.2f})",
+            fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.98])
         out2b = os.path.join(
             args.outdir,
             f"attn_contrast_{args.dataset}_{args.which}_w{args.window}_{slug_w}_vs_{_slug(ckptv)}.png")
