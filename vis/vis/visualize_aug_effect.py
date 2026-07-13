@@ -74,45 +74,54 @@ def main():
     T = len(orig); t = np.arange(T)
     ch = col_names[v]
 
-    # ── 1) ρ sweep at fixed J (0.6 = ours, highlighted) — one image ────────────
-    cmap = plt.cm.viridis
-    fig, ax = plt.subplots(figsize=(10, 4.2))
-    ax.plot(t, orig, color="0.25", lw=2.0, label="original", zorder=6)
+    # ── 1) ρ sweep — one panel per ρ, side by side (0.6 = ours, red) ───────────
+    fig, axes = plt.subplots(1, len(args.rhos), figsize=(2.9 * len(args.rhos), 3.2), sharey=True)
+    axes = np.atleast_1d(axes)
     for i, rho in enumerate(args.rhos):
+        ax = axes[i]
         aug = DWTAugmentation(wavelet=args.wavelet, level=args.rho_J, mode="soft_threshold",
                               soft_threshold_sigma=float(rho))
-        y = _apply(aug, x, v)
         ours = abs(rho - 0.6) < 1e-9
-        ax.plot(t, y,
-                color="#d62728" if ours else cmap(i / max(len(args.rhos) - 1, 1)),
-                lw=2.8 if ours else 1.5, alpha=0.95 if ours else 0.85,
-                zorder=5 if ours else 3,
-                label=f"ρ={rho:g} (ours)" if ours else f"ρ={rho:g}")
-    ax.set_title(f"Soft-threshold easy view — effect of shrinkage ρ  (J={args.rho_J}) — {args.dataset}·{ch}",
-                 fontsize=12)
-    ax.set_xlabel("timestep"); ax.set_ylabel("value")
-    ax.legend(frameon=False, ncol=len(args.rhos) + 1, fontsize=9, loc="upper center")
-    for sp in ("top", "right"):
-        ax.spines[sp].set_visible(False)
-    fig.tight_layout()
+        ax.plot(t, orig, color="0.72", lw=0.9, zorder=1)                    # original reference
+        ax.plot(t, _apply(aug, x, v), color="#d62728" if ours else "#1f77b4",
+                lw=1.9 if ours else 1.5, zorder=3)
+        ax.set_title(f"ρ={rho:g}" + ("\n(ours)" if ours else ""), fontsize=11,
+                     color="#d62728" if ours else "black")
+        ax.set_xticks([])
+        if i == 0:
+            ax.set_ylabel("value", fontsize=10)
+        else:
+            ax.set_yticks([])
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    fig.suptitle(f"Soft-threshold easy view — ρ sweep  (J={args.rho_J}) — {args.dataset}·{ch}", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     out = os.path.join(args.outdir, f"aug_rho_J{args.rho_J}_{args.dataset}_{ch}.png")
     fig.savefig(out, dpi=160); plt.close(fig); print(f"saved: {out}")
 
-    # ── 2) level J sweep (ρ fixed) ────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(10, 4.2))
-    ax.plot(t, orig, color="0.25", lw=2.0, label="original", zorder=5)
-    lcolors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]
-    for i, J in enumerate(args.levels):
-        aug = DWTAugmentation(wavelet=args.wavelet, level=J, mode="soft_threshold",
-                              soft_threshold_sigma=args.rho_fixed)
-        ax.plot(t, _apply(aug, x, v), color=lcolors[i % len(lcolors)], lw=1.7, label=f"J={J}")
-    ax.set_title(f"Soft-threshold easy view — effect of level J  (ρ={args.rho_fixed:g}) — {args.dataset}·{ch}",
-                 fontsize=12)
-    ax.set_xlabel("timestep"); ax.set_ylabel("value")
-    ax.legend(frameon=False, ncol=len(args.levels) + 1, fontsize=10, loc="upper center")
-    for sp in ("top", "right"):
-        ax.spines[sp].set_visible(False)
-    fig.tight_layout()
+    # ── 2) level J sweep — original + one panel per J, side by side ───────────
+    panels = [("original", None)] + [(f"J={J}", J) for J in args.levels]
+    fig, axes = plt.subplots(1, len(panels), figsize=(2.9 * len(panels), 3.2), sharey=True)
+    axes = np.atleast_1d(axes)
+    for i, (name, J) in enumerate(panels):
+        ax = axes[i]
+        if J is None:
+            ax.plot(t, orig, color="0.20", lw=1.7, zorder=3)
+        else:
+            aug = DWTAugmentation(wavelet=args.wavelet, level=J, mode="soft_threshold",
+                                  soft_threshold_sigma=args.rho_fixed)
+            ax.plot(t, orig, color="0.72", lw=0.9, zorder=1)
+            ax.plot(t, _apply(aug, x, v), color="#1f77b4", lw=1.6, zorder=3)
+        ax.set_title(name, fontsize=11)
+        ax.set_xticks([])
+        if i == 0:
+            ax.set_ylabel("value", fontsize=10)
+        else:
+            ax.set_yticks([])
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    fig.suptitle(f"Soft-threshold easy view — J sweep  (ρ={args.rho_fixed:g}) — {args.dataset}·{ch}", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     out = os.path.join(args.outdir, f"aug_level_{args.dataset}_{ch}.png")
     fig.savefig(out, dpi=160); plt.close(fig); print(f"saved: {out}")
 
