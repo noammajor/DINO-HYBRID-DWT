@@ -30,13 +30,7 @@ import matplotlib.pyplot as plt
 from types import SimpleNamespace
 
 # ── path setup ────────────────────────────────────────────────────────────────
-# Walk up from this file until we find the repo root (the dir containing
-# tsdino_timemixer). Robust to how deep this script is nested (vis/ or vis/vis/).
-_root = os.path.dirname(os.path.abspath(__file__))
-for _ in range(6):
-    if os.path.isdir(os.path.join(_root, "tsdino_timemixer")):
-        break
-    _root = os.path.dirname(_root)
+_root      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _tsdino    = os.path.join(_root, "tsdino_timemixer")
 _tm_root   = os.path.join(_root, "TimeMixer-main")
 _tm_models = os.path.join(_tm_root, "models")

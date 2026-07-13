@@ -40,8 +40,7 @@ UCI HAR Dataset/
 logs/
 Visuals/
 Visuals1/
-vis/*.png
+vis/
+# ignore ALL generated PNGs anywhere in the repo
+*.png
 vis/aug_log.txt
-vis/DWT/
-vis/MODWT/
-vis/SWT/

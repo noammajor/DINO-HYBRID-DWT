@@ -2350,6 +2350,8 @@ if __name__ == "__main__":
                         help="Override number of attention heads")
     parser.add_argument("--lr_pred",             type=float, default=None,
                         help="Override predictor learning rate (JEPA only)")
+    parser.add_argument("--lr_forecasting",      type=float, default=None,
+                        help="Override downstream forecasting fine-tune LR (min_lr set to lr/10)")
     parser.add_argument("--epochs",              type=int, default=None,
                         help="Override number of pretraining epochs")
     parser.add_argument("--epochs_forecasting",  type=int, default=None,
@@ -2451,6 +2453,7 @@ if __name__ == "__main__":
         predictor_layers=args.predictor_layers,
         lr=args.lr,
         lr_pred=args.lr_pred,
+        lr_forecasting=args.lr_forecasting,
         pretrain_source=args.pretrain_source,
         num_patches=args.num_patches,
         seq_len=args.seq_len,

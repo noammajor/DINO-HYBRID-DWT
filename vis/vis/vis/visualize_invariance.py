@@ -103,10 +103,25 @@ def main():
     samples, _, n_vars, _ = load_windows(
         args.dataset, args.data_dir, args.n_samples, args.seq_len, 0, args.seed)
 
+    def _checksum(bb):
+        return sum(float(v.float().mean()) for v in bb.state_dict().values() if v.numel())
+
+    # Each checkpoint gets its OWN freshly-built backbone (load_backbone builds a new
+    # TSMixerForDINO every call). A distinct param-checksum per model proves they are
+    # genuinely different weights — if two match, the checkpoints are the same model.
+    _ref = next((c for c in args.checkpoints if os.path.isfile(c)), None)
     backbones, bsl = [], args.seq_len
     for c in args.checkpoints:
-        print(f"  backbone: {c}")
-        bb, _ok, s = load_backbone(c, n_vars, args.seq_len, device)
+        if c.lower() in ("random", "none", "init") or not os.path.isfile(c):
+            print(f"  backbone: RANDOM-INIT baseline (arch matched to {os.path.basename(os.path.dirname(_ref)) if _ref else 'config defaults'})")
+            bb, _ok, s = load_backbone(_ref or c, n_vars, args.seq_len, device)
+            for prm in bb.parameters():
+                (torch.nn.init.xavier_uniform_ if prm.dim() > 1 else torch.nn.init.zeros_)(prm)
+            bb.eval()
+        else:
+            print(f"  backbone: {c}")
+            bb, _ok, s = load_backbone(c, n_vars, args.seq_len, device)
+        print(f"    param-checksum = {_checksum(bb):+.6f}")
         backbones.append(bb); bsl = s
     if bsl != args.seq_len:
         print(f"  reloading windows at backbone seq_len={bsl}")
@@ -125,17 +140,26 @@ def main():
 
     # ── the figure: representation drift vs perturbation strength ──────────────
     os.makedirs(args.outdir, exist_ok=True)
-    colors = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd"]
-    fig, ax = plt.subplots(figsize=(6.4, 4.3))
+    # Fixed style per role when the usual 3 labels are present; else cycle.
+    role_style = {
+        "regular":    dict(color="#7f7f7f", ls="--", marker="s"),
+        "wino-ts":    dict(color="#d62728", ls="-",  marker="o"),
+        "wino":       dict(color="#d62728", ls="-",  marker="o"),
+        "jitter+crop":dict(color="#1f77b4", ls="-.", marker="^"),
+        "jitter":     dict(color="#1f77b4", ls="-.", marker="^"),
+    }
+    fallback = [dict(color=c, ls="-", marker="o") for c in ("#d62728", "#1f77b4", "#7f7f7f", "#2ca02c")]
+    fig, ax = plt.subplots(figsize=(6.8, 4.6))
     for mi, lab in enumerate(labels):
-        ax.plot(args.sigmas, curves[mi], marker="o", lw=2.2,
-                color=colors[mi % len(colors)], label=lab)
-    ax.set_xlabel("detail-band perturbation strength  $\\sigma$")
-    ax.set_ylabel("representation drift  (relative $L_2$)")
-    ax.set_title(f"Invariance to high-frequency perturbation — {args.dataset}\n"
-                 "(flatter = more wavelet-invariant)", fontsize=11)
-    ax.grid(alpha=0.3); ax.legend(frameon=False)
-    ax.set_ylim(bottom=0)
+        st = role_style.get(lab.strip().lower(), fallback[mi % len(fallback)])
+        ax.plot(args.sigmas, curves[mi], lw=2.5, ms=6.5, label=lab, **st)
+    ax.set_xlabel(r"detail-band perturbation strength  $\sigma$", fontsize=12)
+    ax.set_ylabel(r"representation drift  (relative $L_2$)", fontsize=12)
+    ax.set_title(f"Robustness to high-frequency perturbation — {args.dataset}", fontsize=13)
+    ax.grid(alpha=0.25); ax.legend(frameon=False, fontsize=11, loc="upper left")
+    ax.set_ylim(bottom=0); ax.tick_params(labelsize=10)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
     fig.tight_layout()
     slug = "_vs_".join(l.replace(" ", "").replace("+", "") for l in labels)
     out = os.path.join(args.outdir, f"invariance_{args.dataset}_{slug}.png")
