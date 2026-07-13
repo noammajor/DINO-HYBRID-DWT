@@ -9,7 +9,10 @@ from utils.timefeatures import time_features
 from utils.tools import lineage_search
 from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
-from sktime.utils import load_data
+try:  # unused in the ETT/Custom loaders; newer sktime removed sktime.utils.load_data
+    from sktime.utils import load_data
+except Exception:
+    load_data = None
 import warnings
 from sklearn.preprocessing import StandardScaler
 import random
