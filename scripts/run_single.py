@@ -133,6 +133,10 @@ def main():
                         help="Crop ratio for global crops (1.0 = no crop)")
     parser.add_argument("--local_crop_ratio",  type=float, default=None,
                         help="Crop ratio for local crops (e.g. 0.4)")
+    parser.add_argument("--dwt_level", type=int, default=None,
+                        help="DWT decomposition depth J (e.g. 2/3/4)")
+    parser.add_argument("--batch_size_forecast", type=int, default=None,
+                        help="Forecast batch size override (e.g. lower for electricity)")
     parser.add_argument("--dwt_wavelet_pool", nargs="+", default=None,
                         help="DWT wavelet pool for augmentation, e.g. sym4 sym6 sym8 db4 db6 coif2 "
                              "(DINO only; 'full' family = the 6 listed)")
@@ -214,6 +218,10 @@ def main():
         base_cmd += ["--local_crop_ratio", str(args.local_crop_ratio)]
     if args.dwt_wavelet_pool is not None:
         base_cmd += ["--dwt_wavelet_pool"] + list(args.dwt_wavelet_pool)
+    if args.dwt_level is not None:
+        base_cmd += ["--dwt_level", str(args.dwt_level)]
+    if args.batch_size_forecast is not None:
+        base_cmd += ["--batch_size_forecast", str(args.batch_size_forecast)]
     if args.soft_threshold_sigma is not None:
         base_cmd += ["--soft_threshold_sigma", str(args.soft_threshold_sigma)]
     if args.mlm_phi is not None:

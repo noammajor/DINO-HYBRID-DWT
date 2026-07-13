@@ -266,6 +266,7 @@ def run_dino(skip_train: bool = False,
              lr_forecasting: float = None,
              batch_size: int = None,
              batch_size_forecast: int = None,
+             dwt_level: int = None,
              tsmixer_e_layers: int = None,
              patch_len: int = None,
              backbone: str = "timemixer"):
@@ -393,6 +394,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['batch_size_per_gpu'] = batch_size
     if batch_size_forecast is not None:
         dino_cfg['batch_size_forecast'] = batch_size_forecast
+    if dwt_level is not None:
+        dino_cfg['dwt_level'] = dwt_level
     if backbone_type is not None:
         dino_cfg['backbone_type'] = backbone_type
     if synthetic_data_dir is not None:
@@ -2071,6 +2074,7 @@ def run(model: str,
         mlm_block_size: int = None,
         batch_size: int = None,
         batch_size_forecast: int = None,
+        dwt_level: int = None,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
         soft_threshold_sigma: float = None,
@@ -2202,6 +2206,7 @@ def run(model: str,
     if 'mlm_block_size'        in sig.parameters: kwargs['mlm_block_size']        = mlm_block_size
     if 'batch_size'            in sig.parameters: kwargs['batch_size']            = batch_size
     if 'batch_size_forecast'   in sig.parameters: kwargs['batch_size_forecast']   = batch_size_forecast
+    if 'dwt_level'             in sig.parameters: kwargs['dwt_level']             = dwt_level
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
     if 'soft_threshold_sigma'  in sig.parameters: kwargs['soft_threshold_sigma']  = soft_threshold_sigma
@@ -2385,6 +2390,8 @@ if __name__ == "__main__":
                         help="Override pretrain batch_size_per_gpu (e.g. lower for 21-ch weather)")
     parser.add_argument("--batch_size_forecast", type=int, default=None,
                         help="Override forecast batch size (e.g. lower for 321-ch electricity)")
+    parser.add_argument("--dwt_level", type=int, default=None,
+                        help="Override DWT decomposition depth J (e.g. 2/3/4)")
     parser.add_argument("--mlm_block_size", type=int, default=None,
                         help="MLM/MAE masking granularity: mask contiguous spans of N timesteps "
                              "(8 = block masking ON; 1 = per-step masking OFF). Overrides config.")
@@ -2470,6 +2477,7 @@ if __name__ == "__main__":
         mlm_block_size=args.mlm_block_size,
         batch_size=args.batch_size,
         batch_size_forecast=args.batch_size_forecast,
+        dwt_level=args.dwt_level,
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
         soft_threshold_sigma=args.soft_threshold_sigma,
