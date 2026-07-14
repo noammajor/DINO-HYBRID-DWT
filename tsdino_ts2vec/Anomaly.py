@@ -40,7 +40,7 @@ def _adjustment(gt, pred):
     for i in range(len(gt)):
         if gt[i] == 1 and pred[i] == 1 and not anomaly_state:
             anomaly_state = True
-            for j in range(i, 0, -1):
+            for j in range(i, -1, -1):   # match original TSLib: include index 0
                 if gt[j] == 0: break
                 if pred[j] == 0: pred[j] = 1
             for j in range(i, len(gt)):
