@@ -13,7 +13,13 @@ data_dict = {
     'Exchange': Dataset_Custom,
     'Weather': Dataset_Custom,
     'ECL': Dataset_Custom,
-    'custom': Dataset_Custom,   # generic TSLib-Custom for any of our extra datasets
+    'custom': Dataset_Custom,   # generic TSLib-Custom fallback
+    # our extra datasets — distinct keys so each gets its own pretrain-checkpoint dir
+    'Solar': Dataset_Custom,
+    'AQShunyi': Dataset_Custom,
+    'AQWan': Dataset_Custom,
+    'CzeLan': Dataset_Custom,
+    'PM25': Dataset_Custom,
     'TSLD-0.5G': [DataloaderLarge, DataloaderLargeSingle],
     'TSLD-1G': [DataloaderLarge, DataloaderLargeSingle]
 }

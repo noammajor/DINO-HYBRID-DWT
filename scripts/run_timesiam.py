@@ -29,9 +29,16 @@ from dataset_registry import get_dataset_info
 DATA_DIR = DATA_PATHS["forecasting_data_dir"]
 PRED_LENS = [96, 192, 336, 720]
 
-# our dataset name -> TimeSiam --data key (ETT get their dedicated split classes;
-# everything else uses the generic 'custom' -> Dataset_Custom we added).
-ETT_KEY = {"etth1": "ETTh1", "etth2": "ETTh2", "ettm1": "ETTm1", "ettm2": "ETTm2"}
+# our dataset name -> TimeSiam --data key. The key ALSO names the pretrain
+# checkpoint dir (pretrain saves to pretrain_checkpoints/{args.data}/), so every
+# dataset needs a UNIQUE key or they clobber each other. ETT use their dedicated
+# split classes; the rest map to Dataset_Custom via distinct keys.
+DATA_KEY = {
+    "etth1": "ETTh1", "etth2": "ETTh2", "ettm1": "ETTm1", "ettm2": "ETTm2",
+    "weather": "Weather", "electricity": "ECL", "exchange": "Exchange", "traffic": "Traffic",
+    "solar": "Solar", "aqshunyi": "AQShunyi", "aqwan": "AQWan", "czelan": "CzeLan", "pm2_5": "PM25",
+}
+ETT_KEY = DATA_KEY  # backwards-compat alias
 # ETTh = hourly, ETTm = 15-min, others hourly by default (time-features only).
 FREQ = {"etth1": "h", "etth2": "h", "ettm1": "t", "ettm2": "t"}
 
@@ -61,7 +68,7 @@ PAPER_REPR = {"PatchTST": "avg", "iTransformer": "concat"}
 
 
 def _ts_key(ds):
-    return ETT_KEY.get(ds, "custom")
+    return DATA_KEY.get(ds, "custom")
 
 
 def _run(cmd, log_path, dry):
@@ -88,6 +95,8 @@ def main():
     ap.add_argument("--sampling_range", type=int, default=6)      # paper default
     ap.add_argument("--lineage_tokens", type=int, default=2)      # paper default
     ap.add_argument("--gpu", type=int, default=0)
+    ap.add_argument("--force_pretrain", action="store_true",
+                    help="re-run pretrain even if a checkpoint already exists")
     ap.add_argument("--dry_run", action="store_true")
     a = ap.parse_args()
 
@@ -106,9 +115,10 @@ def main():
         c_in = info["c_in"]
         key  = _ts_key(ds)
         freq = FREQ.get(ds, "h")
-        mid  = f"{ds}_{a.backbone}_sl{seq_len}"          # unique checkpoint id
+        mid  = f"{ds}_{a.backbone}_sl{seq_len}"          # display id only
         logdir = ROOT / "logs" / "timesiam" / ds
-        ckpt = f"./outputs/pretrain_checkpoints/{mid}/ckpt_best.pth"
+        # TimeSiam saves pretrain to pretrain_checkpoints/{args.data}/  (see exp/pretrain.py)
+        ckpt = f"./outputs/pretrain_checkpoints/{key}/ckpt_best.pth"
 
         # per-dataset paper config (PatchTST). ETT are verbatim from the paper;
         # everything else uses `_default` (NOT a paper value — flagged below).
@@ -137,9 +147,13 @@ def main():
                *common, "--d_layers", "1",
                "--mask_rate", str(a.mask_rate), "--sampling_range", str(a.sampling_range),
                "--lineage_tokens", str(a.lineage_tokens), "--train_epochs", str(a.pretrain_epochs)]
-        rc = _run(pre, logdir / "pretrain.log", a.dry_run)
-        if rc != 0 and not a.dry_run:
-            print(f"  [pretrain FAILED rc={rc}] — skipping {ds}"); continue
+        ckpt_abs = TS / "outputs" / "pretrain_checkpoints" / key / "ckpt_best.pth"
+        if ckpt_abs.exists() and not a.force_pretrain and not a.dry_run:
+            print(f"  [skip pretrain] checkpoint exists: {ckpt_abs}")
+        else:
+            rc = _run(pre, logdir / "pretrain.log", a.dry_run)
+            if rc != 0 and not a.dry_run:
+                print(f"  [pretrain FAILED rc={rc}] — skipping {ds}"); continue
 
         # ── (2) fine-tune forecast per horizon ────────────────────────────────
         for pl in PRED_LENS:
