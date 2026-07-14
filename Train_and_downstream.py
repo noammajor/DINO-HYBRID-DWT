@@ -2346,6 +2346,11 @@ if __name__ == "__main__":
         help="Which model to run: dino_timemixer | dino_patchtst | dino_ts2vec | dino_itransformer | patchtst | timemixer | autoformer | fedformer | dlinear",
     )
     parser.add_argument(
+        "--dataset", type=str, default=None,
+        choices=list(_DATASETS),
+        help="Shorthand: sets BOTH pretrain and forecast dataset (in-domain).",
+    )
+    parser.add_argument(
         "--pretrain_dataset", type=str, default=None,
         choices=list(_DATASETS),
         help=f"Dataset for pretraining. Available: {list(_DATASETS)}",
@@ -2546,6 +2551,7 @@ if __name__ == "__main__":
         task=args.task,
         pred_lens=args.pred_lens,
         skip_train=args.skip_train.lower() == "true",
+        dataset=args.dataset,
         pretrain_dataset=args.pretrain_dataset,
         forecast_dataset=args.forecast_dataset,
         pretrain_only=args.pretrain_only.lower() == "true",
