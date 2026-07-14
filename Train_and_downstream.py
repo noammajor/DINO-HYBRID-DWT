@@ -2007,7 +2007,7 @@ def run_dlinear(skip_train: bool = False, pretrain_dataset: str = None,
 def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
              forecast_dataset: str = None, pretrain_only: bool = False,
              linear_probe: bool = True, epochs: int = None, lr: float = None,
-             batch_size: int = None, seed: int = None):
+             batch_size: int = None, seed: int = None, pred_lens=None):
     """In-domain JEPA: DINO-style contract but JEPA's own framework/loaders.
     Pretrains the JEPA encoder on a dataset's own CSV, then non-autoregressive
     forecasting on the same dataset. Data is CSV-driven from dataset_registry,
@@ -2046,7 +2046,7 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
     ds = forecast_dataset or pretrain_dataset or cfg.get("forecast_dataset")
     if ds is None:
         raise ValueError("run_jepa requires a dataset (--dataset)")
-    if epochs     is not None: cfg["num_epochs"] = epochs
+    cfg["num_epochs"] = epochs if epochs is not None else 80   # default 80 pretrain epochs
     if lr         is not None: cfg["lr"]         = lr
     if batch_size is not None: cfg["batch_size"] = batch_size
 
@@ -2087,10 +2087,14 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
     va = DataLoader(_pre("val"),   batch_size=bs, shuffle=False, drop_last=False, num_workers=nw)
     te = DataLoader(_pre("test"),  batch_size=bs, shuffle=False, drop_last=False, num_workers=nw)
 
-    def _fc(split):
-        return DataLoader(PatchTSTForcastingAdapter(csv_path, split, seq_len, pred_len, ps),
+    ps_f      = cfg.get("patch_size_forcasting", ps)
+    PRED_LENS = pred_lens if pred_lens else [96, 192, 336, 720]
+
+    def _fc(split, pl):
+        return DataLoader(PatchTSTForcastingAdapter(csv_path, split, seq_len, pl, ps),
                           batch_size=fbs, shuffle=(split == "train"), drop_last=False, num_workers=nw)
-    fc_tr, fc_va, fc_te = _fc("train"), _fc("val"), _fc("test")
+    # initial loaders (first horizon) so the model can be constructed
+    fc_tr, fc_va, fc_te = (_fc(s, PRED_LENS[0]) for s in ("train", "val", "test"))
 
     print("\n" + "=" * 60)
     print(f"  MODEL: JEPA (in-domain)  dataset={ds}  n_vars={n_vars}")
@@ -2112,9 +2116,23 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
         print("\n[JEPA] Pretrain-only mode — skipping forecasting.")
         return None
 
-    mse = model.forecasting(path="", linear_probe=linear_probe)
-    print(f"\n{'='*60}\n  [JEPA] Forecast (P2P) MSE on {ds}: {mse:.4f}\n{'='*60}")
-    return mse
+    # Forecast on all horizons: rebuild the (context,target) loaders per pred_len,
+    # update horizon_t (model.config is this same cfg dict), reload the pretrained
+    # encoder inside forecasting() and train a fresh head each time.
+    results = {}
+    for pl in PRED_LENS:
+        cfg["horizon_t"]    = pl // ps_f
+        model.forcast_train = _fc("train", pl)
+        model.forcast_val   = _fc("val",   pl)
+        model.forcast_test  = _fc("test",  pl)
+        mse = model.forecasting(path="", linear_probe=linear_probe)
+        results[pl] = float(mse)
+        print(f"  [JEPA] {ds}  pred_len={pl}:  MSE {float(mse):.4f}")
+    avg = sum(results.values()) / len(results)
+    print(f"\n{'='*60}\n  [JEPA] {ds} — per-horizon MSE: "
+          + "  ".join(f"{k}:{v:.4f}" for k, v in results.items())
+          + f"\n  [JEPA] {ds} — avg MSE over {PRED_LENS}: {avg:.4f}\n{'='*60}")
+    return results
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
