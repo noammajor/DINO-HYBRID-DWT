@@ -134,7 +134,10 @@ def main():
             "--enc_in", str(c_in), "--dec_in", str(c_in), "--c_out", str(c_in),
             "--e_layers", str(cfg["e_layers"]), "--d_model", str(cfg["d_model"]),
             "--d_ff", str(cfg["d_ff"]), "--n_heads", str(cfg["n_heads"]), "--factor", "3",
-            "--gpu", str(a.gpu),
+            # CUDA_VISIBLE_DEVICES already isolates a.gpu as cuda:0 inside the child,
+            # so run.py must use index 0 (passing a.gpu → cuda:<a.gpu>, which doesn't exist → the
+            # "deserialize on CUDA device N but device_count is 1" crash).
+            "--gpu", "0",
         ]
 
         print(f"\n{'='*70}\n  TimeSiam | {ds} | {a.backbone} | c_in={c_in} | seq_len={seq_len} | "
