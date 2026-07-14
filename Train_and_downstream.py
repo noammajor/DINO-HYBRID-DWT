@@ -2021,7 +2021,11 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
     # JEPA uses absolute imports (from JEPA.Encoder …, from making_style …) and its
     # own shared/ tree. Seed those paths first (JEPA package lives at JEPA/JEPA/).
     for _p in (str(jepa_dir), str(jepa_dir / "shared"),
-               str(jepa_dir / "shared" / "data_loaders")):
+               str(jepa_dir / "shared" / "data_loaders"),
+               # PatchTSTForcastingAdapter does `from src.data.pred_dataset import …`;
+               # its own path guess (JEPA/PatchTST_self_supervised) is wrong, so add the
+               # repo-root copy explicitly.
+               str(root_dir / "PatchTST_self_supervised")):
         if _p not in _sys.path:
             _sys.path.insert(0, _p)
 
