@@ -20,6 +20,7 @@ data_dict = {
     'AQWan': Dataset_Custom,
     'CzeLan': Dataset_Custom,
     'PM25': Dataset_Custom,
+    'Temp': Dataset_Custom,
     'TSLD-0.5G': [DataloaderLarge, DataloaderLargeSingle],
     'TSLD-1G': [DataloaderLarge, DataloaderLargeSingle]
 }

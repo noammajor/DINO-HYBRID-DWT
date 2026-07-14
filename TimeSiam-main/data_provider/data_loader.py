@@ -403,6 +403,11 @@ class Dataset_Custom(Dataset):
         df_raw.columns: ['date', ...(other features), target feature]
         '''
         cols = list(df_raw.columns)
+        # our custom datasets (AQShunyi, CzeLan, ...) don't have an 'OT' column;
+        # TSLib convention is that the last non-date column is the target. In 'M'
+        # mode this only affects column ordering, so it's safe.
+        if self.target not in cols:
+            self.target = [c for c in cols if c != 'date'][-1]
         cols.remove(self.target)
         cols.remove('date')
         df_raw = df_raw[['date'] + cols + [self.target]]

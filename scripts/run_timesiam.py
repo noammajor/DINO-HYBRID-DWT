@@ -37,6 +37,7 @@ DATA_KEY = {
     "etth1": "ETTh1", "etth2": "ETTh2", "ettm1": "ETTm1", "ettm2": "ETTm2",
     "weather": "Weather", "electricity": "ECL", "exchange": "Exchange", "traffic": "Traffic",
     "solar": "Solar", "aqshunyi": "AQShunyi", "aqwan": "AQWan", "czelan": "CzeLan", "pm2_5": "PM25",
+    "temp": "Temp",
 }
 ETT_KEY = DATA_KEY  # backwards-compat alias
 # ETTh = hourly, ETTm = 15-min, others hourly by default (time-features only).
