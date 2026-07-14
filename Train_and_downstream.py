@@ -2002,9 +2002,121 @@ def run_dlinear(skip_train: bool = False, pretrain_dataset: str = None,
                         pretrain_only=pretrain_only)
 
 
+# ── JEPA (in-domain pretrain + forecast) ──────────────────────────────────────
+
+def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
+             forecast_dataset: str = None, pretrain_only: bool = False,
+             linear_probe: bool = True, epochs: int = None, lr: float = None,
+             batch_size: int = None, seed: int = None):
+    """In-domain JEPA: DINO-style contract but JEPA's own framework/loaders.
+    Pretrains the JEPA encoder on a dataset's own CSV, then non-autoregressive
+    forecasting on the same dataset. Data is CSV-driven from dataset_registry,
+    so it works on every forecasting dataset."""
+    import sys as _sys, importlib.util as _ilu
+    from torch.utils.data import DataLoader
+    import pandas as _pd
+
+    root_dir = Path(__file__).parent
+    jepa_dir = root_dir / "JEPA"
+    # JEPA uses absolute imports (from JEPA.Encoder …, from making_style …) and its
+    # own shared/ tree. Seed those paths first (JEPA package lives at JEPA/JEPA/).
+    for _p in (str(jepa_dir), str(jepa_dir / "shared"),
+               str(jepa_dir / "shared" / "data_loaders")):
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+
+    from config_files.config_jepa import config as _base_cfg
+    # Load JEPA's data_puller under a unique name so it never collides with the
+    # repo's own shared/data_loaders/data_puller.py in sys.modules.
+    _dp_spec = _ilu.spec_from_file_location(
+        "jepa_data_puller", jepa_dir / "shared" / "data_loaders" / "data_puller.py")
+    _jdp = _ilu.module_from_spec(_dp_spec); _dp_spec.loader.exec_module(_jdp)
+    DataPullerDJepa = _jdp.DataPullerDJepa
+    PatchTSTForcastingAdapter = _jdp.PatchTSTForcastingAdapter
+    from JEPA.Jepa import JEPA
+
+    if seed is not None:
+        _set_seed(seed)
+
+    cfg = dict(_base_cfg)
+    ds = forecast_dataset or pretrain_dataset or cfg.get("forecast_dataset")
+    if ds is None:
+        raise ValueError("run_jepa requires a dataset (--dataset)")
+    if epochs     is not None: cfg["num_epochs"] = epochs
+    if lr         is not None: cfg["lr"]         = lr
+    if batch_size is not None: cfg["batch_size"] = batch_size
+
+    # ── per-dataset data wiring from the registry (compatible with all datasets) ─
+    from dataset_registry import get_dataset_info
+    info     = get_dataset_info(ds)
+    csv_path = info["csv_path"]
+    tcol     = info.get("timestamp_col", "date")
+    cols     = info.get("columns")
+    if not cols:                                    # None → auto-detect from CSV header
+        _hdr = list(_pd.read_csv(csv_path, nrows=0).columns)
+        cols = [c for c in _hdr if c != tcol and c.lower() not in ("date", "timestamp")]
+    n_vars = len(cols)
+
+    cfg["input_variables"] = [cols]
+    cfg["timestampcols"]   = [tcol]
+    cfg["path_data"]       = [csv_path]
+    cfg["path_save"]       = str(root_dir / "checkpoints_jepa" / ds) + "/"
+    Path(cfg["path_save"]).mkdir(parents=True, exist_ok=True)
+
+    ps       = cfg["patch_size"]
+    rp       = cfg["ratio_patches"]
+    seq_len  = rp * ps
+    pred_len = cfg["horizon_t"] * cfg.get("patch_size_forcasting", ps)
+    bs       = cfg["batch_size"]
+    fbs      = cfg.get("batch_size_forecast", bs)
+    nw       = cfg.get("num_workers", 4)
+
+    def _pre(split):
+        return DataPullerDJepa(
+            data_paths=[csv_path], patch_size=ps, batch_size=bs, ratio_patches=rp,
+            mask_ratio=cfg["mask_ratio"], masking_type=cfg["masking_type"],
+            num_semantic_tokens=0, input_variables=[cols], timestamp_cols=[tcol],
+            type_data=split, val_prec=cfg.get("val_prec", 0.1),
+            test_prec=cfg.get("test_prec", 0.1), num_blocks=cfg.get("num_blocks", 1))
+
+    tr = DataLoader(_pre("train"), batch_size=bs, shuffle=True,  drop_last=True,  num_workers=nw)
+    va = DataLoader(_pre("val"),   batch_size=bs, shuffle=False, drop_last=False, num_workers=nw)
+    te = DataLoader(_pre("test"),  batch_size=bs, shuffle=False, drop_last=False, num_workers=nw)
+
+    def _fc(split):
+        return DataLoader(PatchTSTForcastingAdapter(csv_path, split, seq_len, pred_len, ps),
+                          batch_size=fbs, shuffle=(split == "train"), drop_last=False, num_workers=nw)
+    fc_tr, fc_va, fc_te = _fc("train"), _fc("val"), _fc("test")
+
+    print("\n" + "=" * 60)
+    print(f"  MODEL: JEPA (in-domain)  dataset={ds}  n_vars={n_vars}")
+    print(f"  pretrain window={seq_len} ({rp}×{ps})   forecast pred_len={pred_len}")
+    print(f"  epochs={cfg['num_epochs']}  lr={cfg['lr']}  batch={bs}")
+    print(f"  path_save={cfg['path_save']}")
+    print("=" * 60)
+
+    # Encoder is channel-independent: dim_in = patch length (P_L), NOT n_vars.
+    model = JEPA(cfg, input_dim=ps, num_patches=rp, steps_per_epoch=len(tr),
+                 train_loader=tr, val_loader=va, test_loader=te,
+                 forcasting_train=fc_tr, forcasting_val=fc_va, forcasting_test=fc_te)
+
+    if not skip_train:
+        model.train_and_evaluate()
+    else:
+        print("[JEPA] skip_train=True — reusing existing checkpoint.")
+    if pretrain_only:
+        print("\n[JEPA] Pretrain-only mode — skipping forecasting.")
+        return None
+
+    mse = model.forecasting(path="", linear_probe=linear_probe)
+    print(f"\n{'='*60}\n  [JEPA] Forecast (P2P) MSE on {ds}: {mse:.4f}\n{'='*60}")
+    return mse
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 RUNNERS = {
+    "jepa":            run_jepa,
     "dino_timemixer":  functools.partial(run_dino, backbone="timemixer"),
     "dino_patchtst":   functools.partial(run_dino, backbone="patchtst"),
     "dino_ts2vec":     functools.partial(run_dino, backbone="ts2vec"),
