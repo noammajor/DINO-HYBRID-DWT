@@ -79,27 +79,37 @@ def make_synthetic(seq_len, seed=0, period=48, n_vars=3):
     return torch.from_numpy(X)
 
 
-def build_augs(cfg):
-    dwt_shared = dict(
+def build_augs(cfg, dwt_hard_scale=1.6, crop_ratio=0.3, vision_mode="contrast"):
+    lo, hi = cfg["dwt_high_perturb_noise_range"]
+    shared = dict(
         wavelet_pool=cfg["dwt_wavelet_pool"], level=cfg["dwt_level"],
         soft_threshold_sigma=cfg["dwt_soft_threshold_sigma"],
         zero_out_ratio=cfg["dwt_zero_out_ratio"], finest_levels=cfg["dwt_finest_levels"],
-        high_perturb_noise_range=cfg["dwt_high_perturb_noise_range"],
     )
-    dwt_soft = aug.DWTAugmentation(mode="soft_threshold", **dwt_shared)   # teacher (easy)
-    dwt_hard = aug.DWTAugmentation(mode="high_perturb", **dwt_shared)     # student (hard)
-    gc_glob = aug.gaussian_noise(std_range=(0.02, 0.10))                  # global crop noise
-    gc_loc = aug.gaussian_noise(std_range=(0.10, 0.30))                  # local crop noise
-    return dwt_soft, dwt_hard, gc_glob, gc_loc
+    dwt_soft = aug.DWTAugmentation(mode="soft_threshold",
+                                   high_perturb_noise_range=(lo, hi), **shared)   # teacher (easy)
+    # harder student: scale up the detail-band perturbation (still only touches detail!)
+    dwt_hard = aug.DWTAugmentation(mode="high_perturb",
+                                   high_perturb_noise_range=(lo * dwt_hard_scale, hi * dwt_hard_scale),
+                                   **shared)                                       # student (hard)
+    gc_glob = aug.gaussian_noise(std_range=(0.02, 0.10))                          # teacher (full + mild noise)
+    if vision_mode == "contrast":                                                # SimCLR-style vision distortion
+        vis_stud = aug.jitter_contrast(jitter_range=(0.15, 0.35),
+                                       contrast_range=(0.5, 1.5),
+                                       brightness_range=(-0.4, 0.4))
+    else:
+        vis_stud = aug.gaussian_noise(std_range=(0.15, 0.40))
+    return {"dwt_soft": dwt_soft, "dwt_hard": dwt_hard, "gc_glob": gc_glob,
+            "vis_stud": vis_stud, "crop_ratio": crop_ratio}
 
 
-def views(x, augs):
+def views(x, A):
     """Return (dwt_teacher, dwt_student, crop_teacher, crop_student) for window x [T,C]."""
-    dwt_soft, dwt_hard, gc_glob, gc_loc = augs
+    dwt_soft, dwt_hard = A["dwt_soft"], A["dwt_hard"]
     dwt_t = dwt_soft(x)                                   # soft-threshold, full window
     dwt_s = dwt_hard(x)                                   # detail-perturb, full window
-    crop_t = gc_glob(x)                                  # crop_ratio 1.0 + noise
-    crop_s = gc_loc(random_crop(x, 0.4))                 # 0.4 crop -> resize -> noise
+    crop_t = A["gc_glob"](x)                             # crop_ratio 1.0 + mild noise
+    crop_s = A["vis_stud"](random_crop(x, A["crop_ratio"]))  # crop -> resize -> vision distortion
     return dwt_t, dwt_s, crop_t, crop_s
 
 
@@ -124,6 +134,10 @@ def main():
     ap.add_argument("--source", default="synthetic", choices=["synthetic", "data"],
                     help="synthetic generic function (runs anywhere) or real dataset")
     ap.add_argument("--period", type=int, default=48, help="synthetic carrier period (samples)")
+    ap.add_argument("--crop_ratio", type=float, default=0.3, help="vision local-crop ratio (smaller = more warp)")
+    ap.add_argument("--dwt_hard_scale", type=float, default=1.6, help="scale DWT student detail-noise (harder view)")
+    ap.add_argument("--vision_mode", default="contrast", choices=["contrast", "gauss"],
+                    help="vision student distortion: SimCLR contrast/brightness/jitter, or plain gaussian")
     ap.add_argument("--dataset", default="etth1")
     ap.add_argument("--csv", default=None, help="path to CSV (defaults from config data_path)")
     ap.add_argument("--idx", type=int, default=500, help="window index for the single-window figure")
@@ -138,7 +152,8 @@ def main():
 
     cfg = load_cfg()
     seq_len = cfg["num_patches"] * cfg["patch_len"]      # 336
-    augs = build_augs(cfg)
+    augs = build_augs(cfg, dwt_hard_scale=a.dwt_hard_scale, crop_ratio=a.crop_ratio,
+                      vision_mode=a.vision_mode)
 
     if a.source == "synthetic":
         n_total = 100000
@@ -187,19 +202,22 @@ def main():
     ax[0].set_ylabel("value")
     # mid: DWT teacher vs student
     ax[1].plot(t, sig(dwt_t), color=TEA, lw=1.1, label="teacher (dwt_soft)")
-    ax[1].plot(t, sig(dwt_s), color=STU, lw=1.0, alpha=.85, label="student (dwt_hard)")
-    ax[1].set_title("DWT (ours) — same trend & period ✓", fontsize=10.5, color="#2ca02c")
+    ax[1].plot(t, sig(dwt_s), color=STU, lw=1.0, alpha=.85,
+               label=f"student (dwt_hard ×{a.dwt_hard_scale:g})")
+    ax[1].set_title("DWT (ours) — hard student, same period ✓", fontsize=10.5, color="#2ca02c")
     ax[1].legend(fontsize=8)
     # right: crop teacher vs student
+    vlab = "crop + contrast/jitter" if a.vision_mode == "contrast" else "crop + strong noise"
     ax[2].plot(t, sig(crop_t), color=TEA, lw=1.1, label="teacher (full + noise)")
-    ax[2].plot(t, sig(crop_s), color=STU, lw=1.0, alpha=.85, label="student (0.4 crop + noise)")
-    ax[2].set_title("Crop+Jitter — period warped ✗", fontsize=10.5, color="#d62728")
+    ax[2].plot(t, sig(crop_s), color=STU, lw=1.0, alpha=.85,
+               label=f"student ({a.crop_ratio:g} {vlab})")
+    ax[2].set_title("Vision-style — period & shape destroyed ✗", fontsize=10.5, color="#d62728")
     ax[2].legend(fontsize=8)
     for axx in ax: axx.set_xlabel("time step")
 
     src_txt = ("generic periodic function" if a.source == "synthetic" else f"real {a.dataset}")
     fig.suptitle(f"{src_txt} through the real augmentation pipeline: "
-                 "DWT preserves the dominant period; crop+jitter warps it",
+                 "a hard DWT student still preserves the period; vision-style distortion destroys it",
                  fontsize=13, y=0.965)
     out1 = os.path.join(a.outdir, "why_dwt_real_signal.png")
     fig.savefig(out1, dpi=150, bbox_inches="tight"); plt.close(fig)
