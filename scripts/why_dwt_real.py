@@ -172,44 +172,30 @@ def main():
         c = a.var
     print(f"plotting channel {c}")
 
-    # ── single-window figure ──────────────────────────────────────────────────
+    # ── single-window figure (time domain only) ───────────────────────────────
     dwt_t, dwt_s, crop_t, crop_s = views(xref, augs)
     t = np.arange(seq_len)
     TEA, STU = "#1f77b4", "#e8703a"
-    fig, ax = plt.subplots(2, 3, figsize=(15, 6.2))
-    plt.subplots_adjust(left=0.06, right=0.99, top=0.9, bottom=0.08, wspace=0.2, hspace=0.32)
+    fig, ax = plt.subplots(1, 3, figsize=(15, 3.4))
+    plt.subplots_adjust(left=0.05, right=0.99, top=0.82, bottom=0.12, wspace=0.16)
 
     def sig(v, ch=c): return v[:, ch].detach().cpu().numpy()
 
-    # top-left: raw window
-    ax[0, 0].plot(t, sig(xref), color="0.2", lw=1.1)
-    ax[0, 0].set_title("real window (standardized)", fontsize=10.5)
-    ax[0, 0].set_ylabel("time domain")
-    # top-mid: DWT teacher vs student
-    ax[0, 1].plot(t, sig(dwt_t), color=TEA, lw=1.1, label="teacher (dwt_soft)")
-    ax[0, 1].plot(t, sig(dwt_s), color=STU, lw=1.0, alpha=.85, label="student (dwt_hard)")
-    ax[0, 1].set_title("DWT (ours) — same trend & period ✓", fontsize=10.5, color="#2ca02c")
-    ax[0, 1].legend(fontsize=8)
-    # top-right: crop teacher vs student
-    ax[0, 2].plot(t, sig(crop_t), color=TEA, lw=1.1, label="teacher (full + noise)")
-    ax[0, 2].plot(t, sig(crop_s), color=STU, lw=1.0, alpha=.85, label="student (0.4 crop + noise)")
-    ax[0, 2].set_title("Crop+Jitter — period warped ✗", fontsize=10.5, color="#d62728")
-    ax[0, 2].legend(fontsize=8)
-
-    # bottom row: power spectra (log), mark dominant period
-    def plot_spec(axx, sigs, colors, labels):
-        for s2, col, lab in zip(sigs, colors, labels):
-            f, P = spectrum(sig(s2))
-            axx.semilogy(f[1:], P[1:] + 1e-9, color=col, lw=1.1, label=lab, alpha=.9)
-        axx.set_xlim(0, 0.5); axx.set_xlabel("frequency (cycles/step)")
-    plot_spec(ax[1, 0], [xref], ["0.2"], ["real"])
-    ax[1, 0].set_ylabel("power (log)"); ax[1, 0].set_title(f"real spectrum  (period≈{dom_period(sig(xref)):.0f})", fontsize=10)
-    plot_spec(ax[1, 1], [dwt_t, dwt_s], [TEA, STU], ["teacher", "student"])
-    ax[1, 1].legend(fontsize=8)
-    ax[1, 1].set_title(f"DWT: peaks aligned  (T≈{dom_period(sig(dwt_t)):.0f}, S≈{dom_period(sig(dwt_s)):.0f})", fontsize=10)
-    plot_spec(ax[1, 2], [crop_t, crop_s], [TEA, STU], ["teacher", "student"])
-    ax[1, 2].legend(fontsize=8)
-    ax[1, 2].set_title(f"Crop: student peak shifted  (T≈{dom_period(sig(crop_t)):.0f}, S≈{dom_period(sig(crop_s)):.0f})", fontsize=10)
+    # left: raw window
+    ax[0].plot(t, sig(xref), color="0.2", lw=1.1)
+    ax[0].set_title("input window (standardized)", fontsize=10.5)
+    ax[0].set_ylabel("value")
+    # mid: DWT teacher vs student
+    ax[1].plot(t, sig(dwt_t), color=TEA, lw=1.1, label="teacher (dwt_soft)")
+    ax[1].plot(t, sig(dwt_s), color=STU, lw=1.0, alpha=.85, label="student (dwt_hard)")
+    ax[1].set_title("DWT (ours) — same trend & period ✓", fontsize=10.5, color="#2ca02c")
+    ax[1].legend(fontsize=8)
+    # right: crop teacher vs student
+    ax[2].plot(t, sig(crop_t), color=TEA, lw=1.1, label="teacher (full + noise)")
+    ax[2].plot(t, sig(crop_s), color=STU, lw=1.0, alpha=.85, label="student (0.4 crop + noise)")
+    ax[2].set_title("Crop+Jitter — period warped ✗", fontsize=10.5, color="#d62728")
+    ax[2].legend(fontsize=8)
+    for axx in ax: axx.set_xlabel("time step")
 
     src_txt = ("generic periodic function" if a.source == "synthetic" else f"real {a.dataset}")
     fig.suptitle(f"{src_txt} through the real augmentation pipeline: "
