@@ -30,10 +30,13 @@ from matplotlib.collections import LineCollection
 
 ROOT = Path(__file__).parent.parent.resolve()
 DINO = ROOT / "tsdino_timemixer"
-for p in (str(ROOT), str(ROOT / "shared"), str(DINO),
+for p in (str(ROOT), str(ROOT / "shared"),
           str(ROOT / "TimeMixer-main" / "models"), str(ROOT / "TimeMixer-main")):
     if p not in sys.path:
         sys.path.insert(0, p)
+# tsdino_timemixer inserted LAST -> first on sys.path, so `models.ts_mixer_backbone`
+# resolves to tsdino_timemixer/models (not TimeMixer-main/models). Same trick as TSMixerAnomaly.py.
+sys.path.insert(0, str(DINO))
 from models.ts_mixer_backbone import TSMixerForDINO  # noqa: E402
 
 
