@@ -99,6 +99,52 @@ def get_attn(bb, x):
     return cap["w"][:, 0, :].cpu().numpy()  # [C, T]
 
 
+def plot_paint(sig, attn, lab, dataset, outdir, var=None):
+    """Series colored by attention; anomalies MARKED (not shaded over) so you can
+    read the attention value at the anomaly points. Prints anomaly-vs-normal attn."""
+    T = sig.shape[0]
+    anom = lab.astype(bool)
+    if var is not None:
+        c = var
+    else:
+        c = int(np.argmax(sig[anom].std(0) if anom.any() else np.abs(sig).max(0)))
+    ser = sig[:, c]; a_c = attn[c]; tt = np.arange(T)
+
+    fig = plt.figure(figsize=(12, 3.6))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, 0.015], height_ratios=[6, 0.5],
+                          hspace=0.05, wspace=0.02)
+    ax = fig.add_subplot(gs[0, 0]); cax = fig.add_subplot(gs[0, 1])
+    axr = fig.add_subplot(gs[1, 0], sharex=ax)     # anomaly rug strip
+
+    # series colored by attention
+    pts = np.array([tt, ser]).T.reshape(-1, 1, 2)
+    segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segs, cmap="magma", norm=plt.Normalize(a_c.min(), a_c.max()))
+    lc.set_array(a_c[:-1]); lc.set_linewidth(2.4); ax.add_collection(lc)
+    ax.set_xlim(0, T - 1); ax.set_ylim(ser.min(), ser.max())
+    # mark anomaly timesteps ON the curve so their attention colour stays visible
+    ax.scatter(tt[anom], ser[anom], s=26, facecolors="none",
+               edgecolors="red", linewidths=1.1, zorder=5, label="anomaly")
+    ax.set_ylabel("value"); ax.legend(loc="upper left", fontsize=8, framealpha=.85)
+    fig.colorbar(lc, cax=cax).set_label("attention", fontsize=8)
+    plt.setp(ax.get_xticklabels(), visible=False)
+
+    m_an = a_c[anom].mean() if anom.any() else float("nan")
+    m_no = a_c[~anom].mean() if (~anom).any() else float("nan")
+    ax.set_title(f"{dataset} · var {c} — signal painted by attention  "
+                 f"(mean attn: anomaly {m_an:.2e} vs normal {m_no:.2e})", fontsize=10)
+
+    # bottom rug: red where anomalous
+    axr.imshow(anom[None, :].astype(float), aspect="auto", cmap="Reds",
+               extent=[0, T - 1, 0, 1], vmin=0, vmax=1)
+    axr.set_yticks([]); axr.set_xlabel("timestep")
+
+    os.makedirs(outdir, exist_ok=True)
+    out = os.path.join(outdir, f"anomaly_paint_{dataset}_var{c}.png")
+    fig.savefig(out, dpi=140, bbox_inches="tight"); plt.close(fig)
+    print(f"saved: {out}   mean attn anomaly={m_an:.3e}  normal={m_no:.3e}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, help="SMD | MSL | SMAP | SWaT | PSM")
@@ -107,6 +153,9 @@ def main():
     ap.add_argument("--num_patches", type=int, default=10)
     ap.add_argument("--decoder_epochs", type=int, default=5)
     ap.add_argument("--var", type=int, default=None, help="channel to plot (default: highest-error one)")
+    ap.add_argument("--mode", choices=["paint", "full"], default="paint",
+                    help="paint = series colored by attention w/ anomalies marked (no decoder); "
+                         "full = 3-panel with reconstruction score")
     ap.add_argument("--gpu", type=int, default=0)
     ap.add_argument("--outdir", default=str(ROOT / "vis" / "anomaly"))
     a = ap.parse_args()
@@ -125,8 +174,29 @@ def main():
     te = torch.utils.data.DataLoader(ds_te, batch_size=64, shuffle=False)
     print(f"{a.dataset}: n_vars={n_vars}  win={win}")
 
-    bb = build_backbone(cfg, n_vars, win, device)
+    bb = build_backbone(cfg, n_vars, win, device); bb.eval()
     load_teacher(bb, a.ckpt)
+
+    # ── paint mode: attention only, no decoder ────────────────────────────────
+    if a.mode == "paint":
+        best = None
+        with torch.no_grad():
+            for patches, labels in te:
+                if patches.dim() == 3: patches = patches.unsqueeze(-1)
+                raw = patches.to(device); B, P, PL, C = raw.shape
+                xin = raw.reshape(B, P * PL, C); lab = labels.numpy()
+                for b in range(B):
+                    n = int(lab[b].sum())
+                    if n > 0 and (best is None or n > best[0]):
+                        attn = get_attn(bb, xin[b:b+1])
+                        best = (n, xin[b].cpu().numpy(), attn, lab[b].astype(int))
+        if best is None:
+            print("No anomalous test window found."); return
+        n_anom, sig, attn, lab = best
+        print(f"plotting window with {n_anom} anomalous timesteps")
+        plot_paint(sig, attn, lab, a.dataset, a.outdir, var=a.var)
+        return
+
     d_model = cfg.get("tsmixer_d_model", 128)
     dec = _ReconDecoder(d_model).to(device)
 
