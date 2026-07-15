@@ -59,6 +59,26 @@ def random_crop(x, crop_ratio):
     return resized.squeeze(0).transpose(0, 1)
 
 
+def make_synthetic(seq_len, seed=0, period=48, n_vars=3):
+    """Generic function whose IDENTITY is a clean low-freq period.
+    Low-freq carrier (survives DWT detail-perturb untouched) + high-freq texture
+    (nuisance DWT edits) + noise. Standardized like real pipeline input.
+    """
+    rng = np.random.default_rng(seed)
+    t = np.arange(seq_len)
+    X = np.zeros((seq_len, n_vars), np.float32)
+    base = period * rng.uniform(0.75, 1.35)          # per-window period → distribution, not a fluke
+    for v in range(n_vars):
+        P = base * (1.0 + 0.08 * v)
+        ph = rng.uniform(0, 2 * np.pi)
+        carrier = np.sin(2 * np.pi * t / P + ph) + 0.4 * np.sin(2 * np.pi * 2 * t / P + ph)
+        texture = 0.15 * np.sin(2 * np.pi * t / 6.0 + rng.uniform(0, 6))   # high-freq detail
+        noise = 0.10 * rng.standard_normal(seq_len)
+        s = carrier + texture + noise
+        X[:, v] = (s - s.mean()) / (s.std() + 1e-8)
+    return torch.from_numpy(X)
+
+
 def build_augs(cfg):
     dwt_shared = dict(
         wavelet_pool=cfg["dwt_wavelet_pool"], level=cfg["dwt_level"],
@@ -101,6 +121,9 @@ def spectrum(sig):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--source", default="synthetic", choices=["synthetic", "data"],
+                    help="synthetic generic function (runs anywhere) or real dataset")
+    ap.add_argument("--period", type=int, default=48, help="synthetic carrier period (samples)")
     ap.add_argument("--dataset", default="etth1")
     ap.add_argument("--csv", default=None, help="path to CSV (defaults from config data_path)")
     ap.add_argument("--idx", type=int, default=500, help="window index for the single-window figure")
@@ -114,21 +137,28 @@ def main():
     np.random.seed(0); torch.manual_seed(0)
 
     cfg = load_cfg()
-    if a.csv:
-        csv = a.csv
-    else:
-        from dataset_registry import get_dataset_info      # resolves real CSV path
-        csv = get_dataset_info(a.dataset)["csv_path"]
     seq_len = cfg["num_patches"] * cfg["patch_len"]      # 336
-    ds = PatchTSTPretrainAdapter(csv_path=csv, split="train", seq_len=seq_len,
-                                 patch_size=cfg["patch_len"], transform=None)
-    print(f"puller: {csv}  windows={len(ds)}  seq_len={seq_len}")
     augs = build_augs(cfg)
 
-    def get_window(idx):
-        x = ds[idx % len(ds)]
-        if not torch.is_tensor(x): x = torch.as_tensor(np.asarray(x))
-        return x.float()
+    if a.source == "synthetic":
+        n_total = 100000
+        def get_window(idx):
+            return make_synthetic(seq_len, seed=idx, period=a.period)
+        print(f"source: synthetic  period={a.period}  seq_len={seq_len}")
+    else:
+        if a.csv:
+            csv = a.csv
+        else:
+            from dataset_registry import get_dataset_info  # resolves real CSV path
+            csv = get_dataset_info(a.dataset)["csv_path"]
+        ds = PatchTSTPretrainAdapter(csv_path=csv, split="train", seq_len=seq_len,
+                                     patch_size=cfg["patch_len"], transform=None)
+        n_total = len(ds)
+        def get_window(idx):
+            x = ds[idx % len(ds)]
+            if not torch.is_tensor(x): x = torch.as_tensor(np.asarray(x))
+            return x.float()
+        print(f"source: {csv}  windows={n_total}  seq_len={seq_len}")
 
     # choose the most periodic channel on the reference window
     xref = get_window(a.idx)
@@ -181,14 +211,16 @@ def main():
     ax[1, 2].legend(fontsize=8)
     ax[1, 2].set_title(f"Crop: student peak shifted  (T≈{dom_period(sig(crop_t)):.0f}, S≈{dom_period(sig(crop_s)):.0f})", fontsize=10)
 
-    fig.suptitle("Real data through the real pipeline: DWT preserves the dominant period; crop+jitter warps it",
+    src_txt = ("generic periodic function" if a.source == "synthetic" else f"real {a.dataset}")
+    fig.suptitle(f"{src_txt} through the real augmentation pipeline: "
+                 "DWT preserves the dominant period; crop+jitter warps it",
                  fontsize=13, y=0.965)
     out1 = os.path.join(a.outdir, "why_dwt_real_signal.png")
     fig.savefig(out1, dpi=150, bbox_inches="tight"); plt.close(fig)
 
     # ── stats over many windows ───────────────────────────────────────────────
     import pywt
-    idxs = np.linspace(0, len(ds) - 1, a.nwin).astype(int)
+    idxs = np.linspace(0, min(n_total, a.nwin * 7) - 1, a.nwin).astype(int)
     dwt_ratio, crop_ratio_arr = [], []
     band_dwt, band_crop = [], []                          # per-band |teacher-student| energy
     WAV, LEV = "sym4", cfg["dwt_level"]
