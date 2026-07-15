@@ -261,6 +261,31 @@ def main():
     axr.set_yticks([]); axr.set_xlabel("timestep")
     fig.savefig(os.path.join(a.outdir, f"anomaly_paint_{a.dataset}_var{c}.png"), dpi=140, bbox_inches="tight"); plt.close(fig)
 
+    # (a2) painted series + reconstruction score + threshold line (twin axis)
+    fig, ax = plt.subplots(figsize=(12, 3.8))
+    pts = np.array([tt, ser]).T.reshape(-1, 1, 2); segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segs, cmap="magma", norm=plt.Normalize(a_c.min(), a_c.max()))
+    lc.set_array(a_c[:-1]); lc.set_linewidth(2.4); ax.add_collection(lc)
+    ax.set_xlim(0, T-1); ax.set_ylim(ser.min(), ser.max())
+    ax.set_ylabel("value (painted by attention)"); ax.set_xlabel("timestep")
+    # ground-truth anomaly spans
+    s = None
+    for t in range(T + 1):
+        on = t < T and anom[t]
+        if on and s is None: s = t
+        if (not on) and s is not None:
+            ax.axvspan(s - 0.5, t - 0.5, color="red", alpha=0.10, lw=0); s = None
+    # score + threshold on the right axis
+    ax2 = ax.twinx()
+    ax2.plot(tt, score, color="#1f77b4", lw=1.3, alpha=.85, label="recon score")
+    ax2.axhline(thr, color="k", ls="--", lw=1.0, label=f"threshold ({100-a.anomaly_ratio:.0f}%)")
+    ax2.fill_between(tt, thr, score, where=score > thr, color="#1f77b4", alpha=.18, label="detected")
+    ax2.set_ylabel("anomaly score")
+    ax2.legend(loc="upper left", fontsize=8, framealpha=.85)
+    fig.colorbar(lc, ax=ax2, pad=0.08).set_label("attention", fontsize=8)
+    ax.set_title(f"{a.dataset} · var {c} — attention-painted signal + reconstruction score / threshold", fontsize=10)
+    fig.savefig(os.path.join(a.outdir, f"anomaly_painted_score_{a.dataset}_var{c}.png"), dpi=140, bbox_inches="tight"); plt.close(fig)
+
     # (b) attention heatmap channels x time + labels
     fig, (axh, axl) = plt.subplots(2, 1, figsize=(12, 4.5), sharex=True,
         gridspec_kw={"height_ratios":[8,0.5]})
