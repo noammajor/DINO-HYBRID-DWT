@@ -33,6 +33,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(ROOT / "tsdino_timemixer"))
 import data_agumentation as aug                        # the REAL augmentation classes
@@ -113,7 +114,11 @@ def main():
     np.random.seed(0); torch.manual_seed(0)
 
     cfg = load_cfg()
-    csv = a.csv or cfg["data_path"]
+    if a.csv:
+        csv = a.csv
+    else:
+        from dataset_registry import get_dataset_info      # resolves real CSV path
+        csv = get_dataset_info(a.dataset)["csv_path"]
     seq_len = cfg["num_patches"] * cfg["patch_len"]      # 336
     ds = PatchTSTPretrainAdapter(csv_path=csv, split="train", seq_len=seq_len,
                                  patch_size=cfg["patch_len"], transform=None)
