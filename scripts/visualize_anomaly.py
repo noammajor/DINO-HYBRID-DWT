@@ -51,7 +51,13 @@ def load_config():
     import importlib.util
     spec = importlib.util.spec_from_file_location("dcfg", DINO / "config.py")
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    return dict(m.config)
+    cfg = dict(m.config)
+    try:  # anomaly_data_dir etc. live in data_paths.DATA_PATHS, not config.py
+        from data_paths import DATA_PATHS
+        cfg = {**DATA_PATHS, **cfg}
+    except Exception:
+        pass
+    return cfg
 
 
 def build_backbone(cfg, c_in, seq_len, device):
