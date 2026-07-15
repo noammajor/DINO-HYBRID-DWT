@@ -128,6 +128,14 @@ def main():
     dec.load_state_dict(ck["decoder"])
     print(f"loaded model: n_vars={n_vars} win={win} thr={thr:.5f} | metrics={ck.get('metrics')}")
 
+    # ── attention hook (global_attn is used by the DINO forward, not forward_recon) ──
+    _cap = {}
+    def _hook(_m, _in, out):
+        w = out[1] if isinstance(out, (tuple, list)) and len(out) > 1 else None
+        if w is not None:
+            _cap["a"] = w.detach()                       # [B*C, 1, T]
+    hattn = bb.global_attn.register_forward_hook(_hook) if hasattr(bb, "global_attn") else None
+
     # ── contiguous test stream + per-(timestep, channel) reconstruction error ──
     from data_loaders.data_puller import AnomalyDataPuller
     ds = AnomalyDataPuller(cfg["anomaly_data_dir"], a.dataset, a.patch_len, win_size=win, which="test")
@@ -135,12 +143,20 @@ def main():
     L = np.asarray(ds.labels).astype(int)              # [Ttotal]
     Tt = (len(X) // win) * win
     err = np.zeros((Tt, n_vars), dtype=np.float32)     # per (t, c)
+    att = np.zeros((Tt, n_vars), dtype=np.float32)     # per (t, c) CLS attention
     with torch.no_grad():
         for i in range(0, Tt, win):
             w = torch.from_numpy(X[i:i+win]).float().unsqueeze(0).to(device)  # [1,win,C]
             z = bb.forward_recon(w)                     # [1,win,C,d_model]
             e = ((dec(z) - w) ** 2)[0].cpu().numpy()    # [win, C]
             err[i:i+win] = e
+            if hattn is not None:
+                _cap.clear()
+                bb(w)                                   # trigger global_attn
+                if "a" in _cap:
+                    A = _cap["a"]                       # [C, 1, win] (B=1)
+                    att[i:i+win] = A[:, 0, :].cpu().numpy().T   # [win, C]
+    if hattn is not None: hattn.remove()
     X, L = X[:Tt], L[:Tt]
     score = err.mean(1)                                 # per-timestep anomaly score
 
@@ -194,9 +210,39 @@ def main():
     out2 = os.path.join(a.outdir, f"anomaly_saliency_heatmap_{a.dataset}.png")
     fig.savefig(out2, dpi=150, bbox_inches="tight"); plt.close(fig)
 
+    # ── (3) combined: top painted-saliency series, bottom attention heatmap ────
+    ac = att[x0:x1]                                      # [T, C]
+    fig, (axP, axA, axR) = plt.subplots(3, 1, figsize=(12, 5.6), sharex=True,
+                                        gridspec_kw={"height_ratios": [4, 4, 0.5], "hspace": 0.08})
+    # top: painted series (saliency)
+    shade(axP, lab, x0)
+    lc2 = LineCollection(segs, cmap="viridis", norm=plt.Normalize(0, vmax))
+    lc2.set_array(col[:-1]); lc2.set_linewidth(1.6)
+    axP.add_collection(lc2)
+    axP.set_xlim(tt[0], tt[-1]); axP.set_ylim(y.min() - .3, y.max() + .3)
+    fig.colorbar(lc2, ax=axP, pad=0.01).set_label("recon error")
+    axP.set_ylabel(f"signal (var {c})")
+    axP.set_title(f"{a.dataset} — top: series painted by reconstruction-error saliency   "
+                  "bottom: CLS attention map (near-uniform)", fontsize=10)
+    # bottom: attention heatmap channels x time
+    av = np.percentile(ac.T, 99.0) if ac.any() else 1.0
+    av0 = np.percentile(ac.T, 1.0) if ac.any() else 0.0
+    imA = axA.imshow(ac.T, aspect="auto", cmap="magma", vmin=av0, vmax=max(av, av0 + 1e-9),
+                     extent=[x0, x1, n_vars, 0])
+    axA.set_ylabel("channel")
+    fig.colorbar(imA, ax=axA, pad=0.01).set_label("attention")
+    axR.imshow(anom[None, :].astype(float), aspect="auto", cmap="Reds",
+               vmin=0, vmax=1, extent=[x0, x1, 0, 1]); axR.set_yticks([])
+    axR.set_ylabel("truth", rotation=0, ha="right", va="center", fontsize=9)
+    axR.set_xlabel("timestep")
+    out3 = os.path.join(a.outdir, f"anomaly_saliency_combined_{a.dataset}.png")
+    fig.savefig(out3, dpi=150, bbox_inches="tight"); plt.close(fig)
+
     print(f"saved: {out1}")
     print(f"saved: {out2}")
-    print(f"stretch[{x0}:{x1}]  {int(anom.sum())} anomalous ts  painted var={c}  thr={thr:.4f}")
+    print(f"saved: {out3}")
+    print(f"stretch[{x0}:{x1}]  {int(anom.sum())} anomalous ts  painted var={c}  thr={thr:.4f}  "
+          f"attn range [{att[x0:x1].min():.4f},{att[x0:x1].max():.4f}]")
 
 
 if __name__ == "__main__":
