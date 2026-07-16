@@ -155,6 +155,9 @@ def main():
                         help="Random seed")
     parser.add_argument("--skip_pretrain", action="store_true",
                         help="Skip pretraining, go straight to forecasting")
+    parser.add_argument("--linear_probe", type=str, default=None, choices=["true", "false"],
+                        help="DINO forecast mode: true=probe (backbone frozen), false=full fine-tune. "
+                             "Default None keeps Train_and_downstream's default (true).")
     parser.add_argument("--dry_run",       action="store_true",
                         help="Print commands without executing them")
     args = parser.parse_args()
@@ -276,6 +279,8 @@ def main():
             "--pretrain_dataset", args.dataset,
             "--forecast_dataset", args.dataset,
         ]
+        if args.linear_probe is not None:
+            forecast_cmd += ["--linear_probe", args.linear_probe]
     if args.checkpoints:
         forecast_cmd += ["--checkpoints"] + [str(c) for c in args.checkpoints]
 
