@@ -96,6 +96,11 @@ config = {
     # sym* = near-linear phase (less distortion); db* = slight phase distortion (harder student view).
     # Pools to try:  sym-only ['sym4','sym6','sym8'] | mixed ['sym4','sym6','db4','db6'] | None (fixed)
     "dwt_wavelet_pool":             ['sym4', 'sym6', 'sym8', 'db4', 'db6'],  # random per sample: sym* (low phase distortion) + db* (higher phase distortion)
+    # Wavelet-basis sampling mode (ablation): how the easy/hard views pick their basis.
+    #   'independent' (default) — each view draws its own basis from dwt_wavelet_pool.
+    #   'shared'                — one basis drawn per sample, shared by both views.
+    #   'fixed'                 — always use dwt_wavelet (pool ignored).
+    "wavelet_sampling_mode":        "independent",
     "dwt_level":                    3,              # try: 2, 3, 4
     "dwt_soft_threshold_sigma":     0.6,            # bumped: 0.3 → 0.6 (more aggressive teacher smoothing)
     "dwt_zero_out_ratio":           0.4,

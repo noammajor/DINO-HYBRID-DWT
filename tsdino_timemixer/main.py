@@ -792,6 +792,13 @@ class DataAugmentationDino:
         self.use_reconstruction = dwt_cfg.get('use_reconstruction', False)
         self.recon_mask_ratio   = dwt_cfg.get('recon_mask_ratio',   0.4)
         self.patch_len          = dwt_cfg.get('patch_len',          16)
+        # Wavelet-basis sampling mode (ablation):
+        #   'independent' (default) — every view draws its own basis from the pool.
+        #   'shared'      — one basis drawn per sample, shared by all views.
+        #   'fixed'       — always use the single fixed `dwt_wavelet` (pool ignored).
+        self.wavelet_sampling_mode = dwt_cfg.get('wavelet_sampling_mode', 'independent')
+        self._wavelet_pool         = dwt_cfg.get('dwt_wavelet_pool', None)
+        self._fixed_wavelet        = dwt_cfg.get('dwt_wavelet')
         # Pre-build one DWTAugmentation per (crop_index, aug_type) pair
         self._transforms = self._build_transforms(global_crops + local_crops, dwt_cfg)
 
@@ -911,13 +918,24 @@ class DataAugmentationDino:
         # ── DINO contrastive views (DWT augmented) ────────────────────────────
         crops     = []
         all_specs = self.global_crops + self.local_crops
+        # Resolve the per-sample forced basis once, so 'shared' uses ONE draw for
+        # all views and 'fixed' always uses the single configured wavelet.
+        forced_wavelet = None
+        if self.wavelet_sampling_mode == 'fixed':
+            forced_wavelet = self._fixed_wavelet
+        elif self.wavelet_sampling_mode == 'shared':
+            forced_wavelet = (random.choice(self._wavelet_pool)
+                              if self._wavelet_pool else self._fixed_wavelet)
         for i, spec in enumerate(all_specs):
             crop_ratio = spec.get('crop_ratio', 1.0)
             x_in       = self._random_crop(x, crop_ratio) if crop_ratio < 1.0 else x
             aug_type   = spec['type']
             if isinstance(aug_type, list):
                 aug_type = random.choice(aug_type)
-            crops.append(self._transforms[i][aug_type](x_in))
+            transform = self._transforms[i][aug_type]
+            # None → 'independent' (transform draws its own basis from the pool).
+            setattr(transform, '_forced_wavelet', forced_wavelet)
+            crops.append(transform(x_in))
 
         # ── Reconstruction pair (original data only, no DWT) ──────────────────
         if self.use_reconstruction:

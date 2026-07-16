@@ -45,6 +45,11 @@ class DWTAugmentation:
         self.band_scale_detail_range  = band_scale_detail_range
 
     def _pick_wavelet(self):
+        # `_forced_wavelet`, when set by the caller, overrides pool sampling for
+        # this call (used for 'fixed' / 'shared' wavelet-basis sampling modes).
+        forced = getattr(self, '_forced_wavelet', None)
+        if forced is not None:
+            return forced
         if self.wavelet_pool:
             return random.choice(self.wavelet_pool)
         return self.wavelet
@@ -161,6 +166,11 @@ class SWTAugmentation:
         self.band_scale_detail_range  = band_scale_detail_range
 
     def _pick_wavelet(self):
+        # `_forced_wavelet`, when set by the caller, overrides pool sampling for
+        # this call (used for 'fixed' / 'shared' wavelet-basis sampling modes).
+        forced = getattr(self, '_forced_wavelet', None)
+        if forced is not None:
+            return forced
         if self.wavelet_pool:
             return random.choice(self.wavelet_pool)
         return self.wavelet
@@ -257,6 +267,11 @@ class MODWTAugmentation:
         self.band_scale_detail_range  = band_scale_detail_range
 
     def _pick_wavelet(self):
+        # `_forced_wavelet`, when set by the caller, overrides pool sampling for
+        # this call (used for 'fixed' / 'shared' wavelet-basis sampling modes).
+        forced = getattr(self, '_forced_wavelet', None)
+        if forced is not None:
+            return forced
         if self.wavelet_pool:
             return random.choice(self.wavelet_pool)
         return self.wavelet
