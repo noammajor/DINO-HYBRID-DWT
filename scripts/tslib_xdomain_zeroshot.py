@@ -38,11 +38,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B  # noqa: E402  (has __main__ guard; safe to import)
 
-# Channel-independent models can transfer across datasets with different variable
-# counts (weights are shared per channel). Channel-mixing models (iTransformer,
-# TimesNet, FEDformer, Autoformer, ...) tie parameters to the variable count and
-# cannot, so cross-C transfer is restricted to these.
-_CI_MODELS = {"PatchTST", "DLinear", "SparseTSF", "TimeMixer"}
+# Models whose parameters are NOT sized to the variable count, so they can
+# transfer across datasets with different C:
+#   - channel-independent (weights shared per channel): PatchTST, DLinear,
+#     SparseTSF, TimeMixer.
+#   - variables-as-tokens (weights shared across tokens): iTransformer.
+# The rest (TimesNet, FEDformer, Autoformer, ...) bake C into a Conv1d input
+# embedding / output projection and cannot transfer across C without reinit.
+_CROSS_C_MODELS = {"PatchTST", "DLinear", "SparseTSF", "TimeMixer", "iTransformer"}
 
 
 def _base_args(model):
@@ -129,10 +132,10 @@ def run_pair(model_name, source, target, device, pred_lens):
     tgt_csv, c_in = tgt_info["csv_path"], tgt_info["c_in"]
     src_c_in = get_dataset_info(source)["c_in"]
     cross_c  = src_c_in != c_in
-    if cross_c and model_name not in _CI_MODELS:
-        print(f"  [skip] {model_name} is channel-mixing; cannot transfer "
-              f"{source}(C={src_c_in}) -> {target}(C={c_in}). CI models only "
-              f"({sorted(_CI_MODELS)}).", flush=True)
+    if cross_c and model_name not in _CROSS_C_MODELS:
+        print(f"  [skip] {model_name} bakes the variable count into its params; "
+              f"cannot transfer {source}(C={src_c_in}) -> {target}(C={c_in}) "
+              f"without reinit. Cross-C models: {sorted(_CROSS_C_MODELS)}.", flush=True)
         return {}
 
     a = _base_args(model_name)
