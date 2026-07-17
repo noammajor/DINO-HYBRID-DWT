@@ -47,6 +47,7 @@ TB_CFG = {
     "etth2": dict(period_len=24, basis_num=6),
     "ettm1": dict(period_len=4,  basis_num=20),
     "ettm2": dict(period_len=4,  basis_num=20),
+    "weather": dict(period_len=24, basis_num=6),  # cross-C source (24 | 336 and all pred_lens)
 }
 
 SEQ_LEN = 336          # TimeBase's native context (ours_336 baseline)
@@ -127,6 +128,8 @@ def run_pair(source, target, device, pred_lens):
     src_csv = get_dataset_info(source)["csv_path"]
     tgt_info = get_dataset_info(target)
     tgt_csv, c_in = tgt_info["csv_path"], tgt_info["c_in"]
+    src_c_in = get_dataset_info(source)["c_in"]
+    cross_c  = src_c_in != c_in
 
     ea = SimpleNamespace(seq_len=SEQ_LEN, label_len=LABEL_LEN, patch_len=PATCH_LEN,
                          freq="h", batch_size=BATCH_SIZE, num_workers=4)
@@ -140,8 +143,19 @@ def run_pair(source, target, device, pred_lens):
         src_va = _loader(src_csv, "val",   ea, pred_len, False)
         tgt_te = _loader(tgt_csv, "test",  ea, pred_len, False)
 
-        model = _build(source, pred_len, c_in, device)
+        # Train at the SOURCE channel count; TimeBase (individual=0) shares its
+        # basis linears across channels, so for cross-C we rebuild at the target
+        # count and copy every shape-matched weight over.
+        model = _build(source, pred_len, src_c_in, device)
         _train(model, src_tr, src_va, device, pred_len, tag=f"src:{source}")
+        if cross_c:
+            tgt_model = _build(source, pred_len, c_in, device)
+            src_sd, tgt_sd = model.state_dict(), tgt_model.state_dict()
+            keep = {k: v for k, v in src_sd.items()
+                    if k in tgt_sd and tgt_sd[k].shape == v.shape}
+            tgt_model.load_state_dict(keep, strict=False)
+            print(f"    [cross-C {src_c_in}->{c_in}] copied {len(keep)}/{len(tgt_sd)} weights", flush=True)
+            model = tgt_model
         mse, mae = _evaluate(model, tgt_te, device, pred_len)
         print(f"  >> {source}->{target}  pred_len={pred_len}  MSE={mse:.4f}  MAE={mae:.4f}", flush=True)
         results[pred_len] = (mse, mae)
