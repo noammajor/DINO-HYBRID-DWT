@@ -1287,6 +1287,32 @@ def test_run(args):
     if best_state_fc is not None:
         model.load_state_dict(best_state_fc)
         print(f"  [DINO forecast] Restored best checkpoint (best val MSE={best_val_loss_fc:.6f})")
+
+    # ── Cross-domain cross-C: the head was trained on the source (c_in=args.c_in),
+    # but a zero-shot target (TS_FORECAST_TEST_CSV) may have a different channel
+    # count. The forecast head is channel-independent, so rebuild the model at the
+    # target C and copy the shape-matched weights; the C-sized RevIN affine (and
+    # the c_in-based reshapes) adapt to the target — affine reinitializes to plain
+    # per-instance normalization. ────────────────────────────────────────────────
+    _test_c_in = getattr(dataset_forecasting_test, 'data_x', None)
+    _test_c_in = _test_c_in.shape[-1] if _test_c_in is not None else args.c_in
+    if _test_c_in != args.c_in:
+        _tm_kwargs_t = dict(_tm_kwargs); _tm_kwargs_t['c_in'] = _test_c_in
+        _test_model = TSMixerForecastModel(
+            backbone=TSMixerForDINO(**_tm_kwargs_t),
+            pred_len=args.pred_len,
+            use_revin=getattr(args, 'tsmixer_use_revin', os.environ.get('LMC_NO_REVIN') != '1'),
+            head_dropout=_head_drop,
+            multi_scale=_multi_scale,
+        ).to(device)
+        _src_sd, _tgt_sd = model.state_dict(), _test_model.state_dict()
+        _keep = {k: v for k, v in _src_sd.items() if k in _tgt_sd and _tgt_sd[k].shape == v.shape}
+        _test_model.load_state_dict(_keep, strict=False)
+        print(f"  [DINO forecast] cross-C {args.c_in}->{_test_c_in}: "
+              f"copied {len(_keep)}/{len(_tgt_sd)} weights for zero-shot target test")
+        model = _test_model
+        args.c_in = _test_c_in            # per-variable metric accumulators use this
+
     # Testing
     model.eval()
     os.makedirs("test_results/tests", exist_ok=True)
