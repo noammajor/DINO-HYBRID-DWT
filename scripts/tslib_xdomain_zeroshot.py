@@ -11,7 +11,11 @@ Reuses run_tslib_benchmark.py for the data loaders, the TSLib Model classes, and
 the per-dataset default hyperparameters (via effective_args), so numbers are
 comparable to the in-domain supervised baselines.
 
-All ETT datasets are 7-variable, so enc_in matches across any source/target pair.
+Same-variable-count pairs (e.g. any ETT->ETT) transfer directly. For
+cross-variable-count pairs (e.g. weather(21)->etth1(7)) only channel-independent
+models are supported: the model is trained at the source's channel count, then
+rebuilt at the target's count with the shape-matched (channel-independent)
+weights copied over and the C-sized RevIN affine reinitialized.
 The SOURCE dataset drives the architecture + seq_len defaults (used for both).
 
 Usage
@@ -33,6 +37,12 @@ import torch.nn as nn
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B  # noqa: E402  (has __main__ guard; safe to import)
+
+# Channel-independent models can transfer across datasets with different variable
+# counts (weights are shared per channel). Channel-mixing models (iTransformer,
+# TimesNet, FEDformer, Autoformer, ...) tie parameters to the variable count and
+# cannot, so cross-C transfer is restricted to these.
+_CI_MODELS = {"PatchTST", "DLinear", "SparseTSF", "TimeMixer"}
 
 
 def _base_args(model):
@@ -117,6 +127,13 @@ def run_pair(model_name, source, target, device, pred_lens):
     src_csv = get_dataset_info(source)["csv_path"]
     tgt_info = get_dataset_info(target)
     tgt_csv, c_in = tgt_info["csv_path"], tgt_info["c_in"]
+    src_c_in = get_dataset_info(source)["c_in"]
+    cross_c  = src_c_in != c_in
+    if cross_c and model_name not in _CI_MODELS:
+        print(f"  [skip] {model_name} is channel-mixing; cannot transfer "
+              f"{source}(C={src_c_in}) -> {target}(C={c_in}). CI models only "
+              f"({sorted(_CI_MODELS)}).", flush=True)
+        return {}
 
     a = _base_args(model_name)
     a.dataset = source            # SOURCE drives architecture + seq_len defaults
@@ -135,23 +152,42 @@ def run_pair(model_name, source, target, device, pred_lens):
         src_va = _loader(src_csv, "val",   ea, pred_len, False)
         tgt_te = _loader(tgt_csv, "test",  ea, pred_len, False)
 
-        margs = B.build_model_args(ea, "long_term_forecast")
-        margs.pred_len = pred_len
-        margs.enc_in = margs.dec_in = margs.c_out = c_in
-        if model_name == "TimeMixer":
-            # TimeMixer is inherently multi-scale: it down-samples the input into
-            # several resolutions and mixes them. The generic builder leaves
-            # down_sampling_layers=0 → season_list has one element → IndexError at
-            # season_list[1]. Inject the standard TimeMixer multi-scale config.
-            margs.down_sampling_layers = 3
-            margs.down_sampling_window = 2
-            margs.down_sampling_method = "avg"
-        model = B.build_tslib_model(margs).to(device)
+        def _build(C):
+            margs = B.build_model_args(ea, "long_term_forecast")
+            margs.pred_len = pred_len
+            margs.enc_in = margs.dec_in = margs.c_out = C
+            if model_name == "TimeMixer":
+                # TimeMixer is inherently multi-scale: it down-samples the input
+                # into several resolutions and mixes them. The generic builder
+                # leaves down_sampling_layers=0 → season_list has one element →
+                # IndexError at season_list[1]. Inject the standard config.
+                margs.down_sampling_layers = 3
+                margs.down_sampling_window = 2
+                margs.down_sampling_method = "avg"
+            return B.build_tslib_model(margs).to(device)
+
+        # Train on the SOURCE at the source's channel count.
+        model = _build(src_c_in)
+        _train(model, src_tr, src_va,
+               _make_forward(model, device, pred_len, ea.label_len),
+               crit, ea.lr, ea.epochs, ea.patience, tag=f"src:{source}")
+
+        # Cross-variable-count transfer: rebuild at the target's channel count and
+        # copy only the shape-matched (channel-independent) weights. The C-sized
+        # RevIN affine is reinitialized (→ plain per-instance norm), mirroring the
+        # WINO-TS cross-C loader.
+        if cross_c:
+            tgt_model = _build(c_in)
+            src_sd, tgt_sd = model.state_dict(), tgt_model.state_dict()
+            keep = {k: v for k, v in src_sd.items()
+                    if k in tgt_sd and tgt_sd[k].shape == v.shape}
+            reinit = [k for k in tgt_sd if k not in keep]
+            tgt_model.load_state_dict(keep, strict=False)
+            print(f"    [cross-C {src_c_in}->{c_in}] copied {len(keep)}/{len(tgt_sd)} "
+                  f"weights; reinit {len(reinit)} C-sized", flush=True)
+            model = tgt_model
+
         fwd = _make_forward(model, device, pred_len, ea.label_len)
-
-        _train(model, src_tr, src_va, fwd, crit,
-               ea.lr, ea.epochs, ea.patience, tag=f"src:{source}")
-
         mse, mae = _evaluate(model, tgt_te, fwd)
         print(f"  >> {source}->{target}  pred_len={pred_len}  MSE={mse:.4f}  MAE={mae:.4f}", flush=True)
         results[pred_len] = (mse, mae)
