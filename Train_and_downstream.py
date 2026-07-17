@@ -255,6 +255,7 @@ def run_dino(skip_train: bool = False,
              backbone_type: str = None,
              dwt_wavelet_pool: list = None,
              wavelet_sampling_mode: str = None,
+             view_pairing: str = None,
              soft_threshold_sigma: float = None,
              use_koleo: bool = None,
              koleo_weight: float = None,
@@ -410,6 +411,8 @@ def run_dino(skip_train: bool = False,
         dino_cfg['dwt_wavelet_pool'] = dwt_wavelet_pool
     if wavelet_sampling_mode is not None:
         dino_cfg['wavelet_sampling_mode'] = wavelet_sampling_mode
+    if view_pairing is not None:
+        dino_cfg['view_pairing'] = view_pairing
     if soft_threshold_sigma is not None:
         # ρ (shrinkage ratio) for soft-threshold DWT/SWT/MODWT augmentation:
         # threshold = ρ · max(|detail coeffs|) per level.
@@ -2215,6 +2218,7 @@ def run(model: str,
         backbone_type: str = None,
         dwt_wavelet_pool: list = None,
         wavelet_sampling_mode: str = None,
+        view_pairing: str = None,
         soft_threshold_sigma: float = None,
         use_koleo: bool = None,
         koleo_weight: float = None,
@@ -2348,6 +2352,7 @@ def run(model: str,
     if 'backbone_type'         in sig.parameters: kwargs['backbone_type']         = backbone_type
     if 'dwt_wavelet_pool'      in sig.parameters: kwargs['dwt_wavelet_pool']      = dwt_wavelet_pool
     if 'wavelet_sampling_mode' in sig.parameters: kwargs['wavelet_sampling_mode'] = wavelet_sampling_mode
+    if 'view_pairing'          in sig.parameters: kwargs['view_pairing']          = view_pairing
     if 'soft_threshold_sigma'  in sig.parameters: kwargs['soft_threshold_sigma']  = soft_threshold_sigma
     if 'use_koleo'             in sig.parameters: kwargs['use_koleo']             = use_koleo
     if 'koleo_weight'          in sig.parameters: kwargs['koleo_weight']          = koleo_weight
@@ -2561,6 +2566,10 @@ if __name__ == "__main__":
                         choices=["independent", "shared", "fixed"],
                         help="Basis sampling for easy/hard views: independent (default), "
                              "shared (one basis per sample), fixed (always dwt_wavelet)")
+    parser.add_argument("--view_pairing", type=str, default=None,
+                        choices=["default", "hard_student", "same_view", "symmetric"],
+                        help="DINO view-pairing rule: default, hard_student (student-hard only), "
+                             "same_view (add easy-easy loss), symmetric (teacher sees all views)")
     parser.add_argument("--use_koleo", type=str, default=None,
                         help="true|false — enable KoLeo regularizer on global feature (DINO only)")
     parser.add_argument("--koleo_weight", type=float, default=None,
@@ -2633,6 +2642,7 @@ if __name__ == "__main__":
         backbone_type=args.backbone_type,
         dwt_wavelet_pool=args.dwt_wavelet_pool,
         wavelet_sampling_mode=args.wavelet_sampling_mode,
+        view_pairing=args.view_pairing,
         soft_threshold_sigma=args.soft_threshold_sigma,
         use_koleo=(args.use_koleo.lower() == "true") if args.use_koleo is not None else None,
         koleo_weight=args.koleo_weight,

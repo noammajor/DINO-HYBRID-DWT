@@ -501,7 +501,9 @@ def train_TS_DINO(args):
                     _n_global = len(cfg['global_crops'])
                     _n_dino   = _n_global + len(cfg['local_crops'])
                     dino_val = val_batch[:_n_dino]
-                    teacher_out = teacher(dino_val[:_n_global])
+                    _t_in = dino_val if cfg.get('view_pairing', 'default') == 'symmetric' \
+                            else dino_val[:_n_global]
+                    teacher_out = teacher(_t_in)
                     student_out = student(dino_val)
                     v_loss = dino_loss(student_out, teacher_out, epoch)
                     val_loss_sum += v_loss.item() * val_batch[0].size(0)
@@ -558,7 +560,10 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         metric_logger.update(lr=optimizer.param_groups[0]['lr'])
         metric_logger.update(weight_decay=optimizer.param_groups[0]['weight_decay'])
         with torch.cuda.amp.autocast(fp16_scaler is not None):
-            teacher_output = teacher(dino_samples[:n_global])
+            # 'symmetric' view-pairing: teacher processes ALL views, not just easy ones.
+            _teacher_in = dino_samples if cfg.get('view_pairing', 'default') == 'symmetric' \
+                          else dino_samples[:n_global]
+            teacher_output = teacher(_teacher_in)
             student_output = student(dino_samples)
             loss = dino_loss(student_output, teacher_output, epoch)
             _dino_loss_val = loss.item()
@@ -747,15 +752,30 @@ class DINOLoss(nn.Module):
         # teacher centering and sharpening
         temp = self.teacher_temp_schedule[epoch]
         teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
-        teacher_out = teacher_out.detach().chunk(len(cfg['global_crops']))
+
+        # View-pairing mode (ablation). Crop layout in student_out is
+        # [easy_0 .. easy_{n_global-1}, hard_0 .. hard_{n_local-1}].
+        #   default       — teacher=easy views, loss on all cross-view pairs (skip identical view).
+        #   hard_student  — loss only on teacher-easy → student-HARD pairs (student-easy excluded).
+        #   same_view     — default + the identical-view (easy↔easy) pairs (no skip).
+        #   symmetric     — teacher processes ALL views; loss over all cross-view pairs.
+        mode = cfg.get('view_pairing', 'default')
+        n_global = len(cfg['global_crops'])
+        n_teacher = self.ncrops if mode == 'symmetric' else n_global
+        teacher_out = teacher_out.detach().chunk(n_teacher)
 
         total_loss = 0
         n_loss_terms = 0
         for iq, q in enumerate(teacher_out):
             for v in range(len(student_out)):
-                if v == iq:
-                    # we skip cases where student and teacher operate on the same view
-                    continue
+                if mode == 'same_view':
+                    pass                              # include every pair, even v == iq
+                elif mode == 'hard_student':
+                    if v < n_global:                  # only student HARD views contribute
+                        continue
+                else:                                 # default, symmetric
+                    if v == iq:                       # skip identical view
+                        continue
                 loss = torch.sum(-q * F.log_softmax(student_out[v], dim=-1), dim=-1)
                 total_loss += loss.mean()
                 n_loss_terms += 1

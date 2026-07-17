@@ -101,6 +101,12 @@ config = {
     #   'shared'                — one basis drawn per sample, shared by both views.
     #   'fixed'                 — always use dwt_wavelet (pool ignored).
     "wavelet_sampling_mode":        "independent",
+    # View-pairing rule for the DINO loss (ablation):
+    #   'default'      — teacher=easy, student=all views, loss on cross-view pairs (skip identical).
+    #   'hard_student' — loss only on teacher-easy → student-hard pairs (student-easy excluded).
+    #   'same_view'    — default + identical-view (easy↔easy) pairs.
+    #   'symmetric'    — teacher processes all views; loss over all cross-view pairs.
+    "view_pairing":                 "default",
     "dwt_level":                    3,              # try: 2, 3, 4
     "dwt_soft_threshold_sigma":     0.6,            # bumped: 0.3 → 0.6 (more aggressive teacher smoothing)
     "dwt_zero_out_ratio":           0.4,
