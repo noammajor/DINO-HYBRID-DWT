@@ -573,16 +573,23 @@ def run_anomaly(a, device):
 
     scores = np.concatenate(scores).reshape(-1)
     labels = np.concatenate(labels).reshape(-1).astype(int)
-    # Threshold on COMBINED train+test energy, then segment point-adjustment —
-    # matches tsdino_timemixer/TSMixerAnomaly.py so baselines are comparable.
-    thresh = np.percentile(
-        np.concatenate([train_energy, scores]), 100 - a.anomaly_ratio)
+    # Leak-free by default: threshold on the (all-normal) TRAIN energy only, so
+    # the test set never influences it. Point-adjustment off by default (inflates
+    # F1). Mirrors tsdino_timemixer/TSMixerAnomaly.py so baselines stay comparable.
+    # Restore old behavior with TS_ANOMALY_THRESH=combined / TS_ANOMALY_ADJUST=1.
+    _thr_pool = (np.concatenate([train_energy, scores])
+                 if os.environ.get("TS_ANOMALY_THRESH", "train") == "combined"
+                 else train_energy)
+    thresh = np.percentile(_thr_pool, 100 - a.anomaly_ratio)
     preds  = (scores > thresh).astype(int)
-    labels, preds = _adjustment(labels, preds)
+    if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1":
+        labels, preds = _adjustment(labels, preds)
     prec, rec, f1, _ = precision_recall_fscore_support(
         labels, preds, average="binary", zero_division=0)
+    _thr = "combined" if os.environ.get("TS_ANOMALY_THRESH", "train") == "combined" else "train-only"
+    _adj = "point-adjusted" if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1" else "raw"
     print(f"  >> {a.model}  P={prec:.4f}  R={rec:.4f}  F1={f1:.4f}  "
-          f"(anomaly_ratio={a.anomaly_ratio}%, point-adjusted, combined-threshold)")
+          f"(anomaly_ratio={a.anomaly_ratio}%, {_adj}, {_thr}-threshold)")
     return {"precision": prec, "recall": rec, "f1": f1}
 
 
