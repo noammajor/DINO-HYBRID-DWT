@@ -47,7 +47,13 @@ _ANOMALY_RATIO = {
 }
 
 def _get_anomaly_ratio(dataset: str, cfg: dict) -> float:
-    """Return TSLib-matched anomaly ratio, falling back to config or 1.0."""
+    """Return TSLib-matched anomaly ratio, falling back to config or 1.0.
+
+    TS_ANOMALY_RATIO env var overrides everything (per-run sweeps without editing code).
+    """
+    _env = os.environ.get("TS_ANOMALY_RATIO")
+    if _env:
+        return float(_env)
     return _ANOMALY_RATIO.get(dataset, cfg.get("anomaly_ratio", 1.0))
 
 def _set_seed(seed: int = GLOBAL_SEED):
