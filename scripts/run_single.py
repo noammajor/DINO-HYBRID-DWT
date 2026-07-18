@@ -115,6 +115,8 @@ def main():
                         help="Checkpoint epochs to evaluate during forecasting, e.g. --checkpoints 1 3 5 10")
     parser.add_argument("--lr",       type=float, default=None,
                         help="Pretraining LR (default: model-specific)")
+    parser.add_argument("--lr_forecasting", type=float, default=None,
+                        help="Forecast fine-tune LR (head_lr=encoder_lr; DINO)")
     parser.add_argument("--batch_size", type=int, default=None,
                         help="Pretrain batch size override (per-run; e.g. small for high-channel datasets)")
     parser.add_argument("--warmup_epochs", type=int, default=None,
@@ -201,6 +203,8 @@ def main():
         base_cmd += ["--epochs", str(args.epochs)]
     if args.epochs_forecasting:
         base_cmd += ["--epochs_forecasting", str(args.epochs_forecasting)]
+    if args.lr_forecasting is not None:
+        base_cmd += ["--lr_forecasting", str(args.lr_forecasting)]
     if args.seed is not None:
         base_cmd += ["--seed", str(args.seed)]
     if args.warmup_epochs is not None:
