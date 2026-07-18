@@ -39,7 +39,7 @@ _SEED_TAG   = ''   # set by run() when seed is provided; used by runners to suff
 
 # Per-dataset anomaly detection hyperparameters matching TSLib reference configs
 _ANOMALY_RATIO = {
-    "SMD":  0.5,   # TSLib uses 0.5 for SMD
+    "SMD":  1.0,   # TSLib benchmark uses 1.0 for SMD (matched to baselines)
     "MSL":  1.0,
     "SMAP": 1.0,
     "PSM":  1.0,
