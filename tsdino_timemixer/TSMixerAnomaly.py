@@ -288,12 +288,21 @@ def anomaly_detection(
     gt          = np.concatenate(all_labels).reshape(-1).astype(int)
 
     # ── (4) Threshold & predict ────────────────────────────────────────────────
-    threshold = np.percentile(
-        np.concatenate([train_energy, test_energy]), 100 - anomaly_ratio)
+    # Leak-free by default: the threshold is set from the (all-normal) TRAIN
+    # reconstruction energy only, so the test set never influences it. Set
+    # TS_ANOMALY_THRESH=combined to restore the old TSLib train+test thresholding.
+    if os.environ.get("TS_ANOMALY_THRESH", "train") == "combined":
+        _thr_pool = np.concatenate([train_energy, test_energy])
+    else:
+        _thr_pool = train_energy
+    threshold = np.percentile(_thr_pool, 100 - anomaly_ratio)
     pred = (test_energy > threshold).astype(int)
 
-    # ── (5) Adjustment + metrics ───────────────────────────────────────────────
-    gt, pred  = _adjustment(gt.copy(), pred.copy())
+    # ── (5) Metrics ────────────────────────────────────────────────────────────
+    # Point-adjustment is OFF by default (it inflates F1). Set TS_ANOMALY_ADJUST=1
+    # to restore the standard TSLib segment adjustment.
+    if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1":
+        gt, pred = _adjustment(gt.copy(), pred.copy())
     accuracy  = accuracy_score(gt, pred)
     precision, recall, f1, _ = precision_recall_fscore_support(
         gt, pred, average="binary", zero_division=0)

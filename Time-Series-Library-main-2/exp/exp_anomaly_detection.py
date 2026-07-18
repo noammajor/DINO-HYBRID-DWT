@@ -169,8 +169,13 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
         attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
         test_energy = np.array(attens_energy)
-        combined_energy = np.concatenate([train_energy, test_energy], axis=0)
-        threshold = np.percentile(combined_energy, 100 - self.args.anomaly_ratio)
+        # Leak-free by default: threshold from the (all-normal) TRAIN energy only.
+        # Set TS_ANOMALY_THRESH=combined to restore the old train+test thresholding.
+        if os.environ.get("TS_ANOMALY_THRESH", "train") == "combined":
+            thr_pool = np.concatenate([train_energy, test_energy], axis=0)
+        else:
+            thr_pool = train_energy
+        threshold = np.percentile(thr_pool, 100 - self.args.anomaly_ratio)
         print("Threshold :", threshold)
 
         # (3) evaluation on the test set
@@ -182,8 +187,10 @@ class Exp_Anomaly_Detection(Exp_Basic):
         print("pred:   ", pred.shape)
         print("gt:     ", gt.shape)
 
-        # (4) detection adjustment
-        gt, pred = adjustment(gt, pred)
+        # (4) detection adjustment — OFF by default (point-adjustment inflates F1).
+        # Set TS_ANOMALY_ADJUST=1 to restore the standard TSLib segment adjustment.
+        if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1":
+            gt, pred = adjustment(gt, pred)
 
         pred = np.array(pred)
         gt = np.array(gt)
