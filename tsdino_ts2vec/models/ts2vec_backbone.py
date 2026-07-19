@@ -92,11 +92,27 @@ class TS2VecForDINO(nn.Module):
         self.seq_len = (_num_patch * patch_len) if _num_patch is not None else None
 
         self.head = None
+        self._head_pool_T = None
         if head_type == "prediction":
             if self.seq_len is None:
                 raise ValueError("TS2Vec prediction head needs num_patch (→ seq_len) at construction")
-            self.head = nn.Sequential(nn.Dropout(head_dropout),
-                                      nn.Linear(self.seq_len * d_model, target_dim * c_in))
+            _out     = target_dim * c_in
+            _in_full = self.seq_len * d_model
+            # High-channel datasets (electricity c_in=321, traffic c_in=862) make this flat
+            # head exceed 2^31 params, which overflows int32 indexing in the CUDA optimizer
+            # kernels ("illegal memory access"). When that would happen, adaptively pool the T
+            # tokens to a smaller T' so the head stays under the limit. Low-channel datasets
+            # (ETT/weather) keep the full flat head (T' == seq_len) → their numbers don't change.
+            _LIMIT = int(1.5e9)
+            if _in_full * _out > _LIMIT:
+                self._head_pool_T = max(1, _LIMIT // (_out * d_model))
+                _in = self._head_pool_T * d_model
+                print(f"  [TS2Vec head] flat head would be {_in_full * _out / 1e9:.1f}B params "
+                      f"(> {_LIMIT/1e9:.1f}B limit); pooling T {self.seq_len}->{self._head_pool_T} "
+                      f"(head now {_in * _out / 1e6:.0f}M params)")
+            else:
+                _in = _in_full
+            self.head = nn.Sequential(nn.Dropout(head_dropout), nn.Linear(_in, _out))
         elif head_type == "classification":
             self.head = nn.Sequential(nn.Dropout(head_dropout),
                                       nn.Linear(d_model, target_dim))
@@ -156,7 +172,11 @@ class TS2VecForDINO(nn.Module):
             z    = self._to_series(z)
             zn   = self.normalization(z, mode='norm')
             reps = self._encode_tokens(zn)                 # [B, T, d_model]
-            flat = reps.reshape(reps.shape[0], -1)         # [B, T*d_model] — full token embedding
+            if self._head_pool_T is not None:              # cap T for high-channel datasets
+                r    = nn.functional.adaptive_avg_pool1d(reps.transpose(1, 2), self._head_pool_T)
+                flat = r.transpose(1, 2).reshape(reps.shape[0], -1)   # [B, T'*d_model]
+            else:
+                flat = reps.reshape(reps.shape[0], -1)     # [B, T*d_model] — full token embedding
             out  = self.head(flat)                         # [B, pred_len * C]
             out  = out.reshape(out.shape[0], self.pred_len, self.n_vars)
             out  = self.normalization(out, mode='denorm')
