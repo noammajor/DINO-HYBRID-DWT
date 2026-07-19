@@ -33,13 +33,16 @@ def main():
     p.add_argument("--gpu",                type=int, default=0)
     p.add_argument("--epochs_forecasting", type=int, default=None)
     p.add_argument("--datasets", nargs="+", default=DATASETS)
+    p.add_argument("--out_dim", type=int, default=8192,
+                   help="prototype head dim of the pretrained synthetic checkpoint to load")
     args = p.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+    log_folder = ROOT / "logs" / f"dino_synth_lp_outdim{args.out_dim}"
+    log_folder.mkdir(parents=True, exist_ok=True)
 
     for dataset in args.datasets:
-        log_path = LOG_FOLDER / f"{dataset}.log"
+        log_path = log_folder / f"{dataset}.log"
         print(f"\n[{dataset}]  log={log_path.relative_to(ROOT)}", flush=True)
 
         with open(log_path, "w") as fh:
@@ -52,7 +55,7 @@ def main():
                     forecast_dataset   = dataset,
                     backbone_type      = "tsmixer",
                     encoder_layers     = 4,
-                    out_dim            = 8192,
+                    out_dim            = args.out_dim,
                     ckpt_tag           = "tsmixer",
                     checkpoints        = ["best"],
                     linear_probe       = True,          # <-- frozen backbone
