@@ -35,13 +35,13 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "shared"))
-sys.path.insert(0, str(ROOT / "tsdino_timemixer"))
+sys.path.insert(0, str(ROOT / "wino" / "tsdino_timemixer"))
 import data_agumentation as aug                        # the REAL augmentation classes
 from data_loaders.data_puller import PatchTSTPretrainAdapter  # the REAL puller
 
 
 def load_cfg():
-    spec = importlib.util.spec_from_file_location("dcfg", ROOT / "tsdino_timemixer" / "config.py")
+    spec = importlib.util.spec_from_file_location("dcfg", ROOT / "wino" / "tsdino_timemixer" / "config.py")
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     return dict(m.config)
 

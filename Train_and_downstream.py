@@ -282,9 +282,11 @@ def run_dino(skip_train: bool = False,
         raise ValueError(f"run_dino: unknown backbone '{backbone}' (expected 'timemixer', 'patchtst', 'ts2vec', 'timesnet', 'timerxl' or 'itransformer')")
     root_dir   = Path(__file__).parent
     _dino_dirs = {"timemixer": "tsdino_timemixer", "patchtst": "tsdino_patchtst", "ts2vec": "tsdino_ts2vec", "timesnet": "tsdino_timesnet", "timerxl": "tsdino_timerxl", "itransformer": "tsdino_itransformer"}
-    dino_dir   = root_dir / _dino_dirs[backbone]
+    wino_dir   = root_dir / "wino"
+    dino_dir   = wino_dir / _dino_dirs[backbone]
     shared_dir = root_dir / "shared"
-    _add_path(root_dir)          # so `from tsdino_common import …` resolves inside main.py
+    _add_path(root_dir)
+    _add_path(wino_dir)          # so `from tsdino_common import …` resolves inside main.py
     _add_path(dino_dir)
     _add_path(shared_dir)
 
@@ -1296,7 +1298,7 @@ def run_timemixer(skip_train: bool = False,
     if pred_lens is None:
         pred_lens = [96, 192, 336, 720]
 
-    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    timemixer_dir = Path(__file__).parent / "models" / "TimeMixer-main"
     shared_dir    = Path(__file__).parent / "shared"
     _add_path(shared_dir)
 
@@ -1784,7 +1786,7 @@ def _run_tslib_forecast(
     if pred_lens is None:
         pred_lens = [96, 192, 336, 720]
 
-    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    timemixer_dir = Path(__file__).parent / "models" / "TimeMixer-main"
     shared_dir    = Path(__file__).parent / "shared"
     _add_path(shared_dir)
 
@@ -1971,7 +1973,7 @@ def _run_tslib_forecast(
 
 def _load_tslib_cfg(config_filename: str) -> dict:
     import importlib.util as _ilu
-    timemixer_dir = Path(__file__).parent / "TimeMixer-main"
+    timemixer_dir = Path(__file__).parent / "models" / "TimeMixer-main"
     spec = _ilu.spec_from_file_location("_cfg", timemixer_dir / config_filename)
     mod  = _ilu.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -2029,7 +2031,7 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
     import pandas as _pd
 
     root_dir = Path(__file__).parent
-    jepa_dir = root_dir / "JEPA"
+    jepa_dir = root_dir / "aux_tasks" / "JEPA"
     # JEPA uses absolute imports (from JEPA.Encoder …, from making_style …) and its
     # own shared/ tree. Seed those paths first (JEPA package lives at JEPA/JEPA/).
     for _p in (str(jepa_dir), str(jepa_dir / "shared"),

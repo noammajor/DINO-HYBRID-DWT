@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.resolve()
-TS   = ROOT / "TimeSiam-main"
+TS   = ROOT / "models" / "TimeSiam-main"
 sys.path.insert(0, str(ROOT))
 from data_paths import DATA_PATHS
 from dataset_registry import get_dataset_info

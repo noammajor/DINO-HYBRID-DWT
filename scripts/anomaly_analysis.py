@@ -31,9 +31,9 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 
 ROOT = Path(__file__).parent.parent.resolve()
-DINO = ROOT / "tsdino_timemixer"
+DINO = ROOT / "wino" / "tsdino_timemixer"
 for p in (str(ROOT), str(ROOT / "shared"),
-          str(ROOT / "TimeMixer-main" / "models"), str(ROOT / "TimeMixer-main")):
+          str(ROOT / "models" / "TimeMixer-main" / "models"), str(ROOT / "models" / "TimeMixer-main")):
     if p not in sys.path:
         sys.path.insert(0, p)
 sys.path.insert(0, str(DINO))          # tsdino_timemixer/models must win

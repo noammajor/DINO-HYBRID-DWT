@@ -1,0 +1,1146 @@
+import pandas as pd
+import torch
+from torch.utils.data import Dataset
+from making_style import get_mask_style
+import os
+import sys
+import pickle
+import torch
+import numpy as np
+from pathlib import Path
+from sklearn.preprocessing import StandardScaler
+
+
+# ── Shared Monash .tsf reader ─────────────────────────────────────────────────
+
+def _read_tsf_series(path):
+    """Read a Monash .tsf file. Returns a list of 1-D numpy float32 arrays."""
+    found_data = False
+    series_list = []
+    with open(path, 'r', encoding='cp1252') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('@data'):
+                found_data = True
+            elif not line.startswith('@') and found_data:
+                vals_str = line.split(':')[-1].split(',')
+                vals = []
+                for v in vals_str:
+                    v = v.strip()
+                    vals.append(np.nan if v == '?' else float(v))
+                if vals:
+                    series_list.append(np.array(vals, dtype=np.float32))
+    return series_list
+
+class DataPullerDJepa(Dataset):
+    def __init__(self,
+    data_paths,
+    patch_size,
+    batch_size,
+    ratio_patches,
+    mask_ratio,
+    masking_type,
+    num_semantic_tokens,
+    input_variables,
+    timestamp_cols,
+    type_data,
+    val_prec = 0.1,
+    test_prec = 0.25,
+    epochs = 5000,
+    stride = None,
+    num_blocks = 1):
+        self.batch_size = batch_size
+        self.ratio_patches = ratio_patches
+        self.mask_ratio = mask_ratio
+        self.masking_type = masking_type
+        self.num_blocks = num_blocks
+        self.num_semantic_tokens = num_semantic_tokens
+        self.input_variables = input_variables
+        self.timestamp_cols = timestamp_cols
+        self.data_paths = data_paths
+        self.val_prec = val_prec
+        self.test_prec = test_prec
+        self.which = type_data  # 'train', 'val', 'test'
+        self.patch_size = patch_size
+        self.stride = stride if stride is not None else patch_size  # default: non-overlapping
+        self.chunk_size = self.patch_size + (self.ratio_patches - 1) * self.stride
+        self.all_map = {'train': [], 'val': [], 'test': []}
+        self.scaler = StandardScaler()
+        self.epochs_completed = 0 
+        self.epochs = epochs
+
+        processed_dfs = []
+        self.Train_Val_Test_splits = {
+            'train': [],
+            'val': [],
+            'test': []
+        }
+        for path, t_col, input_vars in zip(data_paths, timestamp_cols, input_variables):
+            df = pd.read_csv(path, parse_dates=[t_col], low_memory=False, sep=',')          
+            fcols = df.select_dtypes("float").columns.tolist()
+            df[fcols] = df[fcols].apply(pd.to_numeric, downcast="float")
+            processed_dfs.append(df)
+            icols = df.select_dtypes("integer").columns
+            df[icols] = df[icols].apply(pd.to_numeric, downcast="integer")
+            df.sort_values(by=[t_col], inplace=True)
+            val_len = int(len(df) * self.val_prec)
+            test_len = int(len(df) * self.test_prec)
+            train_len = len(df) - val_len - test_len
+            # Fit scaler on training portion only, transform all splits
+            train_portion = df.iloc[:train_len][input_vars].values
+            self.scaler.fit(train_portion)
+            df_scaled = self.scaler.transform(df[input_vars].values)
+            df_tensor = torch.tensor(df_scaled).float()
+            print(f"--- Normalization Check ({self.which}) ---")
+            print(f"Mean (should be ~0): {df_tensor.mean().item():.6f}")
+            print(f"Std  (should be ~1): {df_tensor.std().item():.6f}")
+            train_df, val_df, test_df = torch.split(df_tensor, [train_len, val_len, test_len])
+            self.Train_Val_Test_splits['train'].append(train_df)
+            self.Train_Val_Test_splits['val'].append(val_df)
+            self.Train_Val_Test_splits['test'].append(test_df)
+            # Sliding window with step=1 for maximum coverage on small datasets
+        window_step = 1
+        for split_name in ['train', 'val', 'test']:
+            for file_idx, tensor in enumerate(self.Train_Val_Test_splits[split_name]):
+                n = tensor.size(0)
+                max_start = n - self.chunk_size
+                if max_start < 0:
+                    continue
+                for start in range(0, max_start + 1, window_step):
+                    self.all_map[split_name].append((file_idx, start))
+
+    def __len__(self):
+        return len(self.all_map[self.which])
+
+    def __getitem__(self, idx):
+        file_idx, start = self.all_map[self.which][idx]
+        source_data = self.Train_Val_Test_splits[self.which][file_idx]
+        start = min(start, max(0, source_data.size(0) - self.chunk_size))
+        end = start + self.chunk_size
+        chunk = source_data[start:end]
+        if chunk.dim() == 1:
+            chunk = chunk.unsqueeze(-1)
+        patches = [chunk[i * self.stride : i * self.stride + self.patch_size] for i in range(self.ratio_patches)]
+        patches_tensor = torch.stack(patches)  # [ratio_patches, patch_size, n_vars]
+        context_idx, target_idx = get_mask_style(
+            B=1,
+            num_patches=self.ratio_patches,
+            type=self.masking_type,
+            p=self.mask_ratio,
+            num_blocks=self.num_blocks,
+        )
+        self.epochs_completed += 1
+        return patches_tensor, context_idx.squeeze(0), target_idx.squeeze(0)
+
+
+# ── PatchTST-identical forecasting adapter ────────────────────────────────────
+
+class PatchTSTForcastingAdapter(Dataset):
+    """
+    Wraps PatchTST's Dataset_ETT_hour / Dataset_ETT_minute / Dataset_Custom
+    and reshapes (seq_x, seq_y) → (context_patches, target_patches).
+
+    All split borders, normalization, and sliding windows are 100% identical
+    to PatchTST's linear-probe setup.
+
+    seq_x  [seq_len, n_vars]   →  context_patches [context_size, patch_size, n_vars]
+    seq_y  [pred_len, n_vars]  →  target_patches  [h, patch_size, n_vars]
+
+    Requires seq_len % patch_size == 0 and pred_len % patch_size == 0.
+    """
+
+    def __init__(self, csv_path: str, split: str, seq_len: int, pred_len: int, patch_size: int):
+        from pathlib import Path as _Path
+        _patchtst_dir = str(_Path(__file__).parent.parent.parent / "PatchTST_self_supervised")
+        if _patchtst_dir not in sys.path:
+            sys.path.insert(0, _patchtst_dir)
+        from src.data.pred_dataset import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom
+
+        assert seq_len  % patch_size == 0, f"seq_len={seq_len} not divisible by patch_size={patch_size}"
+        assert pred_len % patch_size == 0, f"pred_len={pred_len} not divisible by patch_size={patch_size}"
+
+        self.patch_size   = patch_size
+        self.context_size = seq_len  // patch_size
+        self.h            = pred_len // patch_size
+
+        root      = os.path.dirname(os.path.abspath(csv_path))
+        fname     = os.path.basename(csv_path)
+        fname_low = fname.lower()
+        size      = [seq_len, 0, pred_len]  # label_len=0: target immediately follows context
+
+        if 'etth' in fname_low:
+            self._ds = Dataset_ETT_hour(root, split=split, size=size, features='M', data_path=fname)
+        elif 'ettm' in fname_low:
+            self._ds = Dataset_ETT_minute(root, split=split, size=size, features='M', data_path=fname)
+        else:
+            self._ds = Dataset_Custom(root, split=split, size=size, features='M', data_path=fname)
+
+    def __len__(self):
+        return len(self._ds)
+
+    def __getitem__(self, idx):
+        seq_x, seq_y = self._ds[idx]                                 # [seq_len, n_vars], [pred_len, n_vars]
+        ctx = seq_x.reshape(self.context_size, self.patch_size, -1)  # [context_size, patch_size, n_vars]
+        tgt = seq_y.reshape(self.h,            self.patch_size, -1)  # [h, patch_size, n_vars]
+        return ctx, tgt
+
+
+# ── PatchTST-identical pretraining adapter (DINO, etc.) ──────────────────────
+
+class PatchTSTPretrainAdapter(Dataset):
+    """
+    Wraps PatchTST's Dataset_ETT_hour / Dataset_ETT_minute / Dataset_Custom
+    for self-supervised pretraining (DINO, etc.).
+
+    Uses identical splits, normalization, and sliding-window stride to the
+    PatchTST forecasting benchmark.  Returns transform(seq_x) where
+    seq_x is [seq_len, n_vars].
+    """
+
+    def __init__(self, csv_path: str, split: str, seq_len: int, patch_size: int,
+                 transform=None):
+        _patchtst_dir = str(Path(__file__).parent.parent.parent / "PatchTST_self_supervised")
+        if _patchtst_dir not in sys.path:
+            sys.path.insert(0, _patchtst_dir)
+        from src.data.pred_dataset import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom
+
+        root      = os.path.dirname(os.path.abspath(csv_path))
+        fname     = os.path.basename(csv_path)
+        fname_low = fname.lower()
+        size      = [seq_len, 0, patch_size]   # pred_len=patch_size: minimum valid
+
+        if 'etth' in fname_low:
+            self._ds = Dataset_ETT_hour(root, split=split, size=size, features='M', data_path=fname)
+        elif 'ettm' in fname_low:
+            self._ds = Dataset_ETT_minute(root, split=split, size=size, features='M', data_path=fname)
+        else:
+            self._ds = Dataset_Custom(root, split=split, size=size, features='M', data_path=fname)
+
+        self.transform = transform
+        print(f"PatchTSTPretrainAdapter [{split}] ({fname}): {len(self._ds)} windows")
+
+    def __len__(self):
+        return len(self._ds)
+
+    def __getitem__(self, idx):
+        seq_x, _ = self._ds[idx]   # [seq_len, n_vars]
+        if self.transform:
+            seq_x = self.transform(seq_x)
+        return seq_x
+
+
+# ── Monash pretraining (JEPA) ─────────────────────────────────────────────────
+
+class MonashDataPullerJEPA(Dataset):
+    """
+    Loads all Monash .tsf files for Discrete JEPA pretraining.
+
+    Returns (patches_tensor, context_idx, target_idx) matching DataPullerDJepa.
+    Each univariate series is returned as [ratio_patches, patch_size, 1] — no
+    variable-count restrictions. Used with a separate DataLoader.
+
+    Config keys used:
+        monash_data_dir  – path to .tsf directory
+        monash_min_len   – min raw series length (default 512)
+        patch_size, ratio_patches, mask_ratio, masking_type, num_blocks,
+        val_prec, test_prec
+    """
+
+    def __init__(self, config, which='train'):
+        self.which          = which
+        self.patch_size     = config['patch_size']
+        self.ratio_patches  = config['ratio_patches']
+        self.mask_ratio     = config['mask_ratio']
+        self.masking_type   = config['masking_type']
+        self.num_blocks     = config.get('num_blocks', 1)
+        self.chunk_size     = self.ratio_patches * self.patch_size
+        self.epochs_completed = 0
+
+        val_prec  = config.get('val_prec', 0.1)
+        test_prec = config.get('test_prec', 0.1)
+        data_dir  = config['monash_data_dir']
+        min_len   = config.get('monash_min_len', 512)
+
+        self._series = {'train': [], 'val': [], 'test': []}
+        self._index  = {'train': [], 'val': [], 'test': []}
+
+        self._load_all(data_dir, min_len, val_prec, test_prec)
+        print(f"MonashDataPullerJEPA: {len(self._index['train'])} train  "
+              f"| {len(self._index['val'])} val  "
+              f"| {len(self._index['test'])} test  chunks  "
+              f"(chunk={self.chunk_size})")
+
+    def _load_all(self, data_dir, min_len, val_prec, test_prec):
+        tsf_files = sorted(f for f in os.listdir(data_dir) if f.endswith('.tsf'))
+
+        for fname in tsf_files:
+            path = os.path.join(data_dir, fname)
+            try:
+                series_list = _read_tsf_series(path)
+            except Exception as e:
+                print(f"  MonashDataPullerJEPA: skipping {fname} — {e}")
+                continue
+
+            loaded = 0
+            for series in series_list:
+                if np.isnan(series).any() or len(series) < min_len:
+                    continue
+                series = series.reshape(-1, 1)  # [T, 1]
+
+                T         = len(series)
+                val_len   = int(T * val_prec)
+                test_len  = int(T * test_prec)
+                train_len = T - val_len - test_len
+
+                scaler = StandardScaler()
+                scaler.fit(series[:train_len])
+                scaled = scaler.transform(series).astype(np.float32)
+
+                splits = {
+                    'train': scaled[:train_len],
+                    'val':   scaled[train_len : train_len + val_len],
+                    'test':  scaled[train_len + val_len :],
+                }
+                for sname, arr in splits.items():
+                    if len(arr) < self.chunk_size:
+                        continue
+                    t     = torch.from_numpy(arr)   # [T, 1]
+                    s_idx = len(self._series[sname])
+                    self._series[sname].append(t)
+                    n_chunks = len(t) // self.chunk_size
+                    for ci in range(n_chunks):
+                        self._index[sname].append((s_idx, ci))
+                loaded += 1
+            if loaded:
+                print(f"  {fname}: {loaded} series")
+
+    def __len__(self):
+        return len(self._index[self.which])
+
+    def __getitem__(self, idx):
+        s_idx, ci = self._index[self.which][idx]
+        tensor = self._series[self.which][s_idx]
+        start  = ci * self.chunk_size
+        chunk  = tensor[start : start + self.chunk_size]  # [chunk_size, 1]
+
+        patches = [chunk[i * self.patch_size : (i + 1) * self.patch_size]
+                   for i in range(self.ratio_patches)]
+        patches_tensor = torch.stack(patches)  # [ratio_patches, patch_size, 1]
+
+        context_idx, target_idx = get_mask_style(
+            B=1,
+            num_patches=self.ratio_patches,
+            type=self.masking_type,
+            p=self.mask_ratio,
+            num_blocks=self.num_blocks,
+        )
+        self.epochs_completed += 1
+        return patches_tensor, context_idx.squeeze(0), target_idx.squeeze(0)
+
+
+class SyntheticArrowDataPullerJEPA(Dataset):
+    """
+    Loads synthetic time series from GluonTS .arrow files (produced by
+    LMC_Synth.py and kernel-synth.py) for JEPA-style pretraining.
+
+    Handles both univariate targets (shape [T]) and multivariate targets
+    (shape [C, T]).  Each window is returned as [ratio_patches, patch_size, C],
+    matching the shape produced by MonashDataPullerJEPA (with C=1 for univariate).
+
+    Returns (patches_tensor, context_idx, target_idx) — identical contract to
+    MonashDataPullerJEPA so ConcatDataset works transparently.
+
+    Config keys used:
+        synthetic_data_dir  – directory containing .arrow files
+        patch_size, ratio_patches, mask_ratio, masking_type, num_blocks,
+        val_prec, test_prec, monash_min_len (reused as min series length)
+    """
+
+    def __init__(self, config, which='train'):
+        self.which          = which
+        self.patch_size     = config['patch_size']
+        self.ratio_patches  = config['ratio_patches']
+        self.mask_ratio     = config['mask_ratio']
+        self.masking_type   = config['masking_type']
+        self.num_blocks     = config.get('num_blocks', 1)
+        self.chunk_size     = self.ratio_patches * self.patch_size
+
+        val_prec  = config.get('val_prec', 0.1)
+        test_prec = config.get('test_prec', 0.1)
+        data_dir  = config['synthetic_data_dir']
+        min_len   = config.get('monash_min_len', 512)
+
+        self._series = {'train': [], 'val': [], 'test': []}
+        self._index  = {'train': [], 'val': [], 'test': []}
+
+        self._load_all(data_dir, min_len, val_prec, test_prec)
+        print(f"SyntheticArrowDataPullerJEPA: {len(self._index['train'])} train  "
+              f"| {len(self._index['val'])} val  "
+              f"| {len(self._index['test'])} test  chunks  "
+              f"(chunk={self.chunk_size})")
+
+    def _load_all(self, data_dir, min_len, val_prec, test_prec):
+        import pyarrow as pa
+
+        arrow_files = sorted(f for f in os.listdir(data_dir) if f.endswith('.arrow'))
+        for fname in arrow_files:
+            path = os.path.join(data_dir, fname)
+            try:
+                with pa.memory_map(path, 'r') as src:
+                    table = pa.ipc.open_file(src).read_all()
+            except Exception:
+                try:
+                    with open(path, 'rb') as f:
+                        reader = pa.ipc.open_stream(f)
+                        table = reader.read_all()
+                except Exception as e:
+                    print(f"  SyntheticArrowDataPullerJEPA: skipping {fname} — {e}")
+                    continue
+
+            targets = table.column('target')
+            loaded = 0
+            for row in targets:
+                arr = row.as_py()
+                if arr is None:
+                    continue
+                arr = np.array(arr, dtype=np.float32)
+
+                # Normalise shape to [T, C]
+                if arr.ndim == 1:
+                    arr = arr[:, None]          # univariate [T] -> [T, 1]
+                elif arr.ndim == 2:
+                    arr = arr.T                 # multivariate [C, T] -> [T, C]
+                else:
+                    continue
+
+                T = arr.shape[0]
+                if T < min_len or np.isnan(arr).any():
+                    continue
+
+                val_len   = int(T * val_prec)
+                test_len  = int(T * test_prec)
+                train_len = T - val_len - test_len
+
+                scaler = StandardScaler()
+                scaler.fit(arr[:train_len])
+                scaled = scaler.transform(arr).astype(np.float32)   # [T, C]
+
+                splits = {
+                    'train': scaled[:train_len],
+                    'val':   scaled[train_len : train_len + val_len],
+                    'test':  scaled[train_len + val_len :],
+                }
+                for sname, split_arr in splits.items():
+                    if len(split_arr) < self.chunk_size:
+                        continue
+                    t     = torch.from_numpy(split_arr)   # [T, C]
+                    s_idx = len(self._series[sname])
+                    self._series[sname].append(t)
+                    n_chunks = len(t) // self.chunk_size
+                    for ci in range(n_chunks):
+                        self._index[sname].append((s_idx, ci))
+                loaded += 1
+            if loaded:
+                print(f"  {fname}: {loaded} series")
+
+    def __len__(self):
+        return len(self._index[self.which])
+
+    def __getitem__(self, idx):
+        s_idx, ci = self._index[self.which][idx]
+        tensor = self._series[self.which][s_idx]
+        start  = ci * self.chunk_size
+        chunk  = tensor[start : start + self.chunk_size]   # [chunk_size, C]
+
+        patches = [chunk[i * self.patch_size : (i + 1) * self.patch_size]
+                   for i in range(self.ratio_patches)]
+        patches_tensor = torch.stack(patches)   # [ratio_patches, patch_size, C]
+
+        context_idx, target_idx = get_mask_style(
+            B=1,
+            num_patches=self.ratio_patches,
+            type=self.masking_type,
+            p=self.mask_ratio,
+            num_blocks=self.num_blocks,
+        )
+        return patches_tensor, context_idx.squeeze(0), target_idx.squeeze(0)
+
+
+# ── TimeDart pretraining window datasets ──────────────────────────────────────
+#
+# TimeDart's pretrain loop expects (batch_x, batch_y, batch_x_mark, batch_y_mark)
+# where batch_x has shape (B, seq_len, C).  Only batch_x is used in the pretrain
+# loss (diffusion reconstruction), so batch_y / marks are returned as zeros.
+
+class MonashWindowDatasetTimeDart(Dataset):
+    """
+    Loads all Monash .tsf files for TimeDart pretraining.
+
+    Each series is split train/val/test (same proportions used across the
+    codebase: val_prec=0.1, test_prec=0.1), scaled with StandardScaler fitted
+    on the training portion, then cut into non-overlapping windows of seq_len.
+
+    Returns (batch_x, zeros_y, zeros_mark_x, zeros_mark_y) where
+    batch_x is shape (seq_len, 1).  Only batch_x is consumed by TimeDart's
+    pretrain loop; the remaining tensors satisfy the 4-tuple contract.
+
+    Config keys used:
+        monash_data_dir, monash_min_len, val_prec, test_prec
+    """
+
+    def __init__(self, data_dir, seq_len=336, which='train',
+                 min_len=512, val_prec=0.1, test_prec=0.1):
+        self.which   = which
+        self.seq_len = seq_len
+
+        self._series = {'train': [], 'val': [], 'test': []}
+        self._index  = {'train': [], 'val': [], 'test': []}
+
+        self._load_all(data_dir, min_len, val_prec, test_prec)
+        print(f"MonashWindowDatasetTimeDart [{which}]: "
+              f"{len(self._index['train'])} train | "
+              f"{len(self._index['val'])} val | "
+              f"{len(self._index['test'])} test windows (seq_len={seq_len})")
+
+    def _load_all(self, data_dir, min_len, val_prec, test_prec):
+        tsf_files = sorted(f for f in os.listdir(data_dir) if f.endswith('.tsf'))
+        for fname in tsf_files:
+            path = os.path.join(data_dir, fname)
+            try:
+                series_list = _read_tsf_series(path)
+            except Exception as e:
+                print(f"  MonashWindowDatasetTimeDart: skipping {fname} — {e}")
+                continue
+            loaded = 0
+            for series in series_list:
+                if np.isnan(series).any() or len(series) < min_len:
+                    continue
+                series = series.reshape(-1, 1)   # [T, 1]
+                T         = len(series)
+                val_len   = int(T * val_prec)
+                test_len  = int(T * test_prec)
+                train_len = T - val_len - test_len
+
+                scaler = StandardScaler()
+                scaler.fit(series[:train_len])
+                scaled = scaler.transform(series).astype(np.float32)
+
+                splits = {
+                    'train': scaled[:train_len],
+                    'val':   scaled[train_len : train_len + val_len],
+                    'test':  scaled[train_len + val_len :],
+                }
+                for sname, arr in splits.items():
+                    if len(arr) < self.seq_len:
+                        continue
+                    t     = torch.from_numpy(arr)
+                    s_idx = len(self._series[sname])
+                    self._series[sname].append(t)
+                    n_windows = len(t) // self.seq_len
+                    for wi in range(n_windows):
+                        self._index[sname].append((s_idx, wi))
+                loaded += 1
+            if loaded:
+                print(f"  {fname}: {loaded} series")
+
+    def __len__(self):
+        return len(self._index[self.which])
+
+    def __getitem__(self, idx):
+        s_idx, wi = self._index[self.which][idx]
+        tensor    = self._series[self.which][s_idx]
+        start     = wi * self.seq_len
+        window    = tensor[start : start + self.seq_len]   # [seq_len, 1]
+        zeros     = torch.zeros_like(window)
+        return window, zeros, zeros, zeros
+
+
+class SyntheticWindowDatasetTimeDart(Dataset):
+    """
+    Loads synthetic .arrow files for TimeDart pretraining.
+
+    Same interface and return contract as MonashWindowDatasetTimeDart.
+    Handles univariate [T] and multivariate [C, T] targets; each channel is
+    treated as an independent univariate series (C=1 slice per window).
+
+    Config keys used:
+        synthetic_data_dir, monash_min_len (reused), val_prec, test_prec
+    """
+
+    def __init__(self, data_dir, seq_len=336, which='train',
+                 min_len=512, val_prec=0.1, test_prec=0.1):
+        self.which   = which
+        self.seq_len = seq_len
+
+        self._series = {'train': [], 'val': [], 'test': []}
+        self._index  = {'train': [], 'val': [], 'test': []}
+
+        self._load_all(data_dir, min_len, val_prec, test_prec)
+        print(f"SyntheticWindowDatasetTimeDart [{which}]: "
+              f"{len(self._index['train'])} train | "
+              f"{len(self._index['val'])} val | "
+              f"{len(self._index['test'])} test windows (seq_len={seq_len})")
+
+    def _load_all(self, data_dir, min_len, val_prec, test_prec):
+        import pyarrow as pa
+        arrow_files = sorted(f for f in os.listdir(data_dir) if f.endswith('.arrow'))
+        for fname in arrow_files:
+            path = os.path.join(data_dir, fname)
+            try:
+                with pa.memory_map(path, 'r') as src:
+                    table = pa.ipc.open_file(src).read_all()
+            except Exception:
+                try:
+                    with open(path, 'rb') as f:
+                        reader = pa.ipc.open_stream(f)
+                        table  = reader.read_all()
+                except Exception as e:
+                    print(f"  SyntheticWindowDatasetTimeDart: skipping {fname} — {e}")
+                    continue
+
+            loaded = 0
+            for row in table.column('target'):
+                arr = row.as_py()
+                if arr is None:
+                    continue
+                arr = np.array(arr, dtype=np.float32)
+                if arr.ndim == 1:
+                    arr = arr[:, None]          # [T] → [T, 1]
+                elif arr.ndim == 2:
+                    arr = arr.T                 # [C, T] → [T, C]
+                else:
+                    continue
+
+                T = arr.shape[0]
+                if T < min_len or np.isnan(arr).any():
+                    continue
+
+                val_len   = int(T * val_prec)
+                test_len  = int(T * test_prec)
+                train_len = T - val_len - test_len
+
+                scaler = StandardScaler()
+                scaler.fit(arr[:train_len])
+                scaled = scaler.transform(arr).astype(np.float32)   # [T, C]
+
+                splits = {
+                    'train': scaled[:train_len],
+                    'val':   scaled[train_len : train_len + val_len],
+                    'test':  scaled[train_len + val_len :],
+                }
+                for sname, split_arr in splits.items():
+                    if len(split_arr) < self.seq_len:
+                        continue
+                    t     = torch.from_numpy(split_arr)   # [T, C]
+                    s_idx = len(self._series[sname])
+                    self._series[sname].append(t)
+                    n_windows = len(t) // self.seq_len
+                    for wi in range(n_windows):
+                        self._index[sname].append((s_idx, wi))
+                loaded += 1
+            if loaded:
+                print(f"  {fname}: {loaded} series")
+
+    def __len__(self):
+        return len(self._index[self.which])
+
+    def __getitem__(self, idx):
+        s_idx, wi = self._index[self.which][idx]
+        tensor    = self._series[self.which][s_idx]
+        start     = wi * self.seq_len
+        window    = tensor[start : start + self.seq_len]   # [seq_len, C]
+        zeros     = torch.zeros_like(window)
+        return window, zeros, zeros, zeros
+
+
+# ── Classification ────────────────────────────────────────────────────────────
+
+def _cls_load_dataset(root: Path, which: str, val_fraction: float):
+    """
+    Auto-detect dataset format and return (X [N,T,C] float32, y [N] int64).
+    StandardScaler is fit on the train split (per variable) and applied to all splits.
+
+    Supported formats
+    -----------------
+    1. Standard npy  : X_train.npy (N,T,C), y_train.npy (N,)
+                       X_test.npy  (N,T,C), y_test.npy  (N,)
+    2. Epilepsy npy  : train_d.npy (N,T,C), train_l.npy (N,)
+                       test_d.npy  (N,T,C), test_l.npy  (N,)
+    3. HAR pt        : train.pt, val.pt, test.pt
+                       each a dict {'samples': Tensor (N,C,T), 'labels': Tensor (N,)}
+    4. EEG pkl       : samples_train.pkl, samples_test.pkl
+                       each a list of (str_label, ndarray (T,C), int_label)
+    """
+    root = Path(root)
+    has_explicit_val = False
+
+    # ── Format 3: HAR (.pt dicts) ────────────────────────────────────────────
+    if (root / "train.pt").exists():
+        has_explicit_val = True
+        def _load_pt(p):
+            d = torch.load(p, map_location="cpu")
+            X = d["samples"].float().numpy()   # (N, C, T)
+            X = X.transpose(0, 2, 1)           # → (N, T, C)
+            y = d["labels"].long().numpy()
+            return X, y
+        X_tr, y_tr = _load_pt(root / "train.pt")
+        X_va, y_va = _load_pt(root / "val.pt")
+        X_te, y_te = _load_pt(root / "test.pt")
+
+    # ── Format 4: EEG (.pkl lists) ───────────────────────────────────────────
+    elif (root / "samples_train.pkl").exists():
+        def _load_pkl(p):
+            with open(p, "rb") as f:
+                samples = pickle.load(f)
+            X = np.stack([s[1] for s in samples], axis=0).astype(np.float32)  # (N,T,C)
+            y = np.array([s[2] for s in samples], dtype=np.int64)
+            return X, y
+        X_tr, y_tr = _load_pkl(root / "samples_train.pkl")
+        X_te, y_te = _load_pkl(root / "samples_test.pkl")
+
+    # ── Format 2: Epilepsy npy ───────────────────────────────────────────────
+    elif (root / "train_d.npy").exists():
+        X_tr = np.load(root / "train_d.npy").astype(np.float32)
+        y_tr = np.load(root / "train_l.npy").astype(np.int64)
+        X_te = np.load(root / "test_d.npy").astype(np.float32)
+        y_te = np.load(root / "test_l.npy").astype(np.int64)
+
+    # ── Format 1: Standard npy ───────────────────────────────────────────────
+    elif (root / "X_train.npy").exists():
+        X_tr = np.load(root / "X_train.npy").astype(np.float32)
+        y_tr = np.load(root / "y_train.npy").astype(np.int64)
+        X_te = np.load(root / "X_test.npy").astype(np.float32)
+        y_te = np.load(root / "y_test.npy").astype(np.int64)
+
+    # ── Format 5: UEA/UCR .ts files ──────────────────────────────────────────
+    elif list(root.glob("*_TRAIN.ts")):
+        from sktime.datasets import load_from_tsfile_to_dataframe
+        train_file = sorted(root.glob("*_TRAIN.ts"))[0]
+        test_file  = sorted(root.glob("*_TEST.ts"))[0]
+
+        def _load_ts(path):
+            df, y_raw = load_from_tsfile_to_dataframe(str(path))
+            # df: (N, C) DataFrame where each cell is a pd.Series of length T
+            n_samples = len(df)
+            n_dims    = df.shape[1]
+            T         = len(df.iloc[0, 0])
+            X = np.zeros((n_samples, T, n_dims), dtype=np.float32)
+            for c in range(n_dims):
+                X[:, :, c] = np.stack(df.iloc[:, c].values)
+            return X, np.array(y_raw)
+
+        X_tr, y_tr_raw = _load_ts(train_file)
+        X_te, y_te_raw = _load_ts(test_file)
+        # Map string labels → int
+        classes = sorted(set(y_tr_raw) | set(y_te_raw))
+        label_map = {c: i for i, c in enumerate(classes)}
+        y_tr = np.array([label_map[l] for l in y_tr_raw], dtype=np.int64)
+        y_te = np.array([label_map[l] for l in y_te_raw], dtype=np.int64)
+
+    else:
+        raise FileNotFoundError(
+            f"Cannot detect dataset format in {root}. "
+            "Expected one of: X_train.npy, train_d.npy, train.pt, samples_train.pkl, *_TRAIN.ts")
+
+    # StandardScaler fit on train X (per variable) — applied to all splits
+    N, T, C = X_tr.shape
+    scaler = StandardScaler()
+    scaler.fit(X_tr.reshape(-1, C))
+    X_tr = scaler.transform(X_tr.reshape(-1, C)).reshape(N, T, C)
+    Nt, Tt, _ = X_te.shape
+    X_te = scaler.transform(X_te.reshape(-1, C)).reshape(Nt, Tt, C)
+
+    if has_explicit_val:
+        Nv, Tv, _ = X_va.shape
+        X_va = scaler.transform(X_va.reshape(-1, C)).reshape(Nv, Tv, C)
+    else:
+        # Stratified val split — ensures all classes represented in val
+        from sklearn.model_selection import train_test_split as _tts
+        idx_tr, idx_va = _tts(np.arange(len(X_tr)), test_size=val_fraction,
+                              stratify=y_tr, random_state=42)
+        X_va, y_va = X_tr[idx_va], y_tr[idx_va]
+        X_tr, y_tr = X_tr[idx_tr], y_tr[idx_tr]
+
+    if which == "train":
+        return X_tr, y_tr
+    elif which == "val":
+        return X_va, y_va
+    else:
+        return X_te, y_te
+
+
+class CSVWindowDatasetTimeDart(Dataset):
+    """
+    In-domain CSV pretraining for TimeDart.
+
+    Wraps PatchTSTPretrainAdapter and returns the same 4-tuple contract as
+    MonashWindowDatasetTimeDart: (batch_x, zeros, zeros, zeros).
+    batch_x shape: (seq_len, n_vars) — caller must set enc_in accordingly.
+    """
+
+    def __init__(self, csv_path: str, split: str, seq_len: int):
+        import torch
+        self._base = PatchTSTPretrainAdapter(csv_path=csv_path, split=split,
+                                             seq_len=seq_len, patch_size=16)
+        seq_x = self._base[0]
+        n_vars = seq_x.shape[1] if hasattr(seq_x, 'shape') else seq_x.size(1)
+        self._zero = torch.zeros(seq_len, n_vars)
+
+    def __len__(self):
+        return len(self._base)
+
+    def __getitem__(self, idx):
+        x = self._base[idx]
+        return x, self._zero, self._zero, self._zero
+
+
+class ClassificationDataPuller(Dataset):
+    """
+    Elastic classification dataset loader. Supports multiple datasets (concatenated
+    with re-mapped labels) and four file formats: standard npy, Epilepsy npy,
+    HAR .pt dicts, EEG .pkl lists. All splits are StandardScaler-normalised using
+    stats fit on the train split of each dataset.
+
+    Args:
+        data_dir      : root directory containing dataset sub-folders
+                        (e.g. "/home/shared/datasets/Classification_TS")
+        dataset_names : str or list of str — dataset sub-folder names
+        patch_size    : patch length; seq_len is zero-padded to a multiple of this
+        which         : "train" | "val" | "test"
+        val_fraction  : fraction of train used as val for datasets without explicit val
+    """
+
+    def __init__(self, data_dir: str, dataset_names, patch_size: int,
+                 which: str = "train", val_fraction: float = 0.1):
+        assert which in ("train", "val", "test")
+        self.patch_size = patch_size
+
+        if isinstance(dataset_names, str):
+            dataset_names = [dataset_names]
+
+        all_X, all_y = [], []
+        label_offset = 0
+
+        for dataset_name in dataset_names:
+            root = Path(data_dir) / dataset_name
+            X, y = _cls_load_dataset(root, which, val_fraction)
+
+            # 0-index labels within this dataset, then offset by accumulated classes
+            unique = np.unique(y)
+            label_map = {v: i + label_offset for i, v in enumerate(sorted(unique))}
+            y = np.array([label_map[v] for v in y], dtype=np.int64)
+            label_offset += len(unique)
+
+            all_X.append(X)
+            all_y.append(y)
+
+        self.n_classes = label_offset
+
+        # Pad all arrays to the same seq_len (max across datasets, rounded to patch_size)
+        max_T    = max(x.shape[1] for x in all_X)
+        padded_T = int(np.ceil(max_T / patch_size)) * patch_size
+        padded   = []
+        orig_T_list = []
+        for x in all_X:
+            orig_T = x.shape[1]
+            orig_T_list.append(np.full(x.shape[0], orig_T, dtype=np.int64))
+            pad = padded_T - orig_T
+            if pad > 0:
+                x = np.pad(x, ((0, 0), (0, pad), (0, 0)))
+            padded.append(x)
+
+        X_cat = np.concatenate(padded, axis=0)
+        y_cat = np.concatenate(all_y,  axis=0)
+
+        self.X         = torch.tensor(X_cat)
+        self.y         = torch.tensor(y_cat)
+        self.n_patches = padded_T // patch_size
+        self._orig_T   = torch.tensor(np.concatenate(orig_T_list))  # (total_samples,)
+
+        names_str = ", ".join(dataset_names)
+        print(f"ClassificationDataPuller [{which}] ({names_str}): "
+              f"{len(self.X)} samples, {padded_T} timesteps → "
+              f"{self.n_patches} patches × {patch_size}, "
+              f"{X_cat.shape[2]} vars, {self.n_classes} classes")
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        # [seq_len, n_vars] → [n_patches, patch_size, n_vars]
+        x = self.X[idx]
+        patches = x.reshape(self.n_patches, self.patch_size, -1)
+        patch_starts = torch.arange(self.n_patches, dtype=torch.long) * self.patch_size
+        padding_mask = patch_starts < self._orig_T[idx]  # (P,) bool: True = real data
+        return patches, self.y[idx], padding_mask
+
+
+# ── UEA/UCR Classification (UEAloader style) ──────────────────────────────────
+
+def _uea_interpolate_missing(y):
+    if y.isna().any():
+        y = y.interpolate(method='linear', limit_direction='both')
+    return y
+
+
+def _uea_subsample(y, limit=256, factor=2):
+    if len(y) > limit:
+        return y[::factor].reset_index(drop=True)
+    return y
+
+
+class _UEANormalizer:
+    def __init__(self):
+        self.mean = None
+        self.std  = None
+
+    def fit_transform(self, df):
+        self.mean = df.mean()
+        self.std  = df.std()
+        return (df - self.mean) / (self.std + np.finfo(float).eps)
+
+    def transform(self, df):
+        return (df - self.mean) / (self.std + np.finfo(float).eps)
+
+
+class UEADataset(Dataset):
+    """UEA/UCR .ts classification dataset.
+
+    Returns raw (T, C) float32 tensors — no pre-patching.
+    The model patches internally via unfold.
+
+    Usage:
+        ds_train = UEADataset(root, dataset_name, split='train')
+        ds_val   = UEADataset(root, dataset_name, split='val',  _shared=ds_train)
+        ds_test  = UEADataset(root, dataset_name, split='test', _shared=ds_train)
+        n_classes = ds_train.n_classes
+    """
+
+    def __init__(self, root: str, dataset_name: str, split: str = 'train',
+                 val_fraction: float = 0.1, _shared=None):
+        from sktime.datasets import load_from_tsfile_to_dataframe
+        root = Path(root)
+        self.split = split.lower()
+
+        if _shared is not None:
+            self._normalizer = _shared._normalizer
+            self._label_map  = _shared._label_map
+            self.n_classes   = _shared.n_classes
+            self.class_names = _shared.class_names
+        else:
+            self._normalizer = None
+            self._label_map  = None
+
+        # Use file-based splits: _TRAIN.ts for train, _TEST.ts for val and test
+        ts_path = root / (f'{dataset_name}_TRAIN.ts' if self.split == 'train'
+                          else f'{dataset_name}_TEST.ts')
+
+        all_df, labels_raw = self._load_ts(ts_path, load_from_tsfile_to_dataframe)
+
+        if _shared is None:
+            cats = pd.Categorical(labels_raw)
+            self.class_names = list(cats.categories)
+            self.n_classes   = len(self.class_names)
+            self._label_map  = {c: i for i, c in enumerate(self.class_names)}
+            norm = _UEANormalizer()
+            all_df = norm.fit_transform(all_df)
+            self._normalizer = norm
+        else:
+            all_df = self._normalizer.transform(all_df)
+
+        int_labels = np.array([self._label_map[str(l)] for l in labels_raw], dtype=np.int64)
+
+        all_IDs = all_df.index.unique()
+        self._samples = [all_df.loc[i].values.astype(np.float32) for i in all_IDs]
+        self._labels  = int_labels
+
+        print(f"UEADataset [{self.split}] ({dataset_name}): "
+              f"{len(self._samples)} samples, {self._samples[0].shape[0]} timesteps, "
+              f"{self._samples[0].shape[1]} vars, {self.n_classes} classes")
+
+    def _load_ts(self, path, loader_fn):
+        df, labels = loader_fn(str(path), return_separate_X_and_y=True,
+                               replace_missing_vals_with='NaN')
+        # Handle variable-length dimensions
+        lengths = df.map(lambda x: len(x)).values
+        if np.abs(lengths - lengths[:, :1]).sum() > 0:
+            df = df.applymap(_uea_subsample)
+        lengths = df.map(lambda x: len(x)).values
+        # Build long DataFrame (N*T, C) indexed by sample int
+        rows = []
+        for row in range(df.shape[0]):
+            T = lengths[row, 0]
+            sample_df = pd.DataFrame(
+                {col: df.iloc[row][col].values for col in df.columns}
+            ).set_index(pd.Index([row] * T))
+            rows.append(sample_df)
+        all_df = pd.concat(rows, axis=0)
+        all_df = all_df.groupby(level=0).transform(_uea_interpolate_missing)
+        return all_df, labels
+
+    def __len__(self):
+        return len(self._samples)
+
+    def __getitem__(self, idx):
+        x = torch.from_numpy(self._samples[idx])        # (T, C)
+        y = torch.tensor(self._labels[idx], dtype=torch.long)
+        orig_len = torch.tensor(x.shape[0], dtype=torch.long)
+        return x, y, orig_len
+
+
+def _pad_collate(batch):
+    """Collate variable-length (T, C) tensors by padding to max T in the batch.
+    Returns (xs_padded, ys, padding_mask) where padding_mask (B, T) is True for real positions."""
+    xs, ys, orig_lens = zip(*batch)
+    orig_lens = torch.stack(orig_lens)          # (B,)
+    max_t = max(x.shape[0] for x in xs)
+    xs_padded = torch.stack([
+        torch.nn.functional.pad(x, (0, 0, 0, max_t - x.shape[0])) for x in xs
+    ])
+    padding_mask = torch.arange(max_t).unsqueeze(0) < orig_lens.unsqueeze(1)  # (B, T)
+    return xs_padded, torch.stack(ys), padding_mask
+
+
+def make_uea_dataloaders(cls_dir: str, dataset_name: str, batch_size: int = 16):
+    """Build train/val/test DataLoaders from a UEA .ts dataset.
+    Uses _TRAIN.ts for train, _TEST.ts for both val and test.
+    Returns (train_loader, val_loader, test_loader, n_classes).
+    Batch size is auto-reduced for high-dimensional datasets (n_vars > 500) to avoid OOM.
+    """
+    dataset_root = os.path.join(cls_dir, dataset_name)
+    ds_train = UEADataset(dataset_root, dataset_name, split='train')
+    ds_test  = UEADataset(dataset_root, dataset_name, split='test', _shared=ds_train)
+    # Auto-scale batch size down for very high-var datasets to avoid OOM
+    n_vars = ds_train._samples[0].shape[-1] if ds_train._samples else 1
+    if n_vars > 500:
+        batch_size = max(1, min(batch_size, 2))
+        print(f"[make_uea_dataloaders] {dataset_name}: n_vars={n_vars}, using batch_size={batch_size}")
+    mk = lambda ds, shuffle: torch.utils.data.DataLoader(
+        ds, batch_size=batch_size, shuffle=shuffle, collate_fn=_pad_collate)
+    train_loader = mk(ds_train, True)
+    test_loader  = mk(ds_test, False)
+    return train_loader, None, test_loader, ds_train.n_classes
+
+
+# ── Anomaly Detection ─────────────────────────────────────────────────────────
+
+class AnomalyDataPuller(Dataset):
+    """
+    Anomaly detection dataset loader matching the reference benchmark protocol.
+
+    Loads raw [T, C] time series from prep_anomaly_data.py output, normalises
+    with StandardScaler fit on train, and returns sliding windows patched to
+    [n_patches, patch_size, n_vars].
+
+    Expected files under {data_dir}/{dataset}/:
+        train.npy        — [T, C]  float  (raw, unnormalised)
+        test.npy         — [T, C]  float
+        test_labels.npy  — [T]     int    (0=normal, 1=anomaly)
+
+    val split = last 20 % of train (matches reference loaders).
+
+    Args:
+        data_dir   : root directory containing dataset sub-folders
+        dataset    : sub-folder name, e.g. "MSL"
+        patch_size : patch length used to reshape each window
+        win_size   : sliding window length in timesteps (default 100)
+        step       : stride between consecutive windows (default 1)
+        which      : "train" | "val" | "test"
+    """
+
+    # TSLib uses step=100 for SMD (non-overlapping); all others step=1
+    _DEFAULT_STEP = {"SMD": 100}
+
+    def __init__(self, data_dir: str, dataset: str, patch_size: int,
+                 win_size: int = 100, step: int = None, which: str = "train"):
+        assert which in ("train", "val", "test")
+        if step is None:
+            step = self._DEFAULT_STEP.get(dataset, 1)
+        root = Path(data_dir) / dataset
+
+        if not root.exists():
+            raise FileNotFoundError(
+                f"Anomaly dataset not found: {root}\n"
+                f"Run prep_anomaly_data.py to generate it.")
+
+        # ── load raw [T, C] data ─────────────────────────────────────────────
+        X_tr = np.load(root / "train.npy", allow_pickle=True).astype(np.float32)
+        X_te = np.load(root / "test.npy",  allow_pickle=True).astype(np.float32)
+
+        for label_file in ("test_labels.npy", "test_labels_processed.npy",
+                           "test_label.npy", "labels_test.npy"):
+            if (root / label_file).exists():
+                labels = np.load(root / label_file, allow_pickle=True) \
+                             .astype(np.int64).reshape(-1)
+                break
+        else:
+            raise FileNotFoundError(f"No label file found in {root}.")
+
+        # ensure 2D [T, C] — handles old pre-windowed [N, win, C] format
+        if X_tr.ndim == 3:
+            X_tr = X_tr.reshape(-1, X_tr.shape[-1])
+            X_te = X_te.reshape(-1, X_te.shape[-1])
+        if X_tr.ndim == 1:
+            X_tr = X_tr[:, None]
+            X_te = X_te[:, None]
+        if X_tr.shape[0] < X_tr.shape[1]:
+            X_tr = X_tr.T
+            X_te = X_te.T
+
+        # ── StandardScaler fit on train ──────────────────────────────────────
+        scaler = StandardScaler()
+        scaler.fit(X_tr)
+        X_tr = scaler.transform(X_tr).astype(np.float32)
+        X_te = scaler.transform(X_te).astype(np.float32)
+
+        # ── val = last 20 % of train ─────────────────────────────────────────
+        split  = int(len(X_tr) * 0.8)
+        X_val  = X_tr[split:]
+
+        # ── assign split ──────────────────────────────────────────────────────
+        if which == "train":
+            self.data   = X_tr
+            self.labels = None
+        elif which == "val":
+            self.data   = X_val
+            self.labels = None
+        else:
+            self.data   = X_te
+            self.labels = labels
+
+        C = X_tr.shape[1]
+        padded_T = int(np.ceil(win_size / patch_size)) * patch_size
+
+        self.win_size   = win_size
+        self.padded_T   = padded_T
+        self.step       = step
+        self.patch_size = patch_size
+        self.n_patches  = padded_T // patch_size
+        self.n_vars     = C
+
+        n_windows = (len(self.data) - win_size) // step + 1
+        print(f"AnomalyDataPuller [{which}] ({dataset}): "
+              f"{n_windows} windows, {padded_T} timesteps → "
+              f"{self.n_patches} patches × {patch_size}, {C} vars")
+
+    def __len__(self):
+        return (len(self.data) - self.win_size) // self.step + 1
+
+    def __getitem__(self, idx):
+        start  = idx * self.step
+        window = self.data[start:start + self.win_size]          # [win_size, C]
+
+        # pad to multiple of patch_size
+        if self.padded_T > self.win_size:
+            window = np.pad(window, ((0, self.padded_T - self.win_size), (0, 0)))
+
+        patches = window.reshape(self.n_patches, self.patch_size, self.n_vars)
+
+        if self.labels is not None:
+            label = self.labels[start:start + self.win_size]
+            if len(label) < self.padded_T:
+                label = np.pad(label, (0, self.padded_T - len(label)))
+            return torch.tensor(patches), torch.tensor(label)
+        return torch.tensor(patches)
