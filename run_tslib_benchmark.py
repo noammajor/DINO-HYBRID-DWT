@@ -51,7 +51,7 @@ import torch.nn as nn
 
 # ── path wiring ───────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
-TSLIB_DIR    = PROJECT_ROOT / "Time-Series-Library-main-2"
+TSLIB_DIR    = PROJECT_ROOT / "models" / "Time-Series-Library-main-2"
 SHARED_DIR   = PROJECT_ROOT / "shared"
 SCRIPTS_DIR  = TSLIB_DIR / "scripts"
 
@@ -482,34 +482,9 @@ def run_classify(a, device):
 # ══════════════════════════════════════════════════════════════════════════════
 #  ANOMALY DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
-def _adjustment(gt, pred):
-    # Segment-level point adjustment (Xu et al.), matching the DINO anomaly eval
-    # in tsdino_timemixer/TSMixerAnomaly.py: if any point inside a true anomaly
-    # segment is flagged, the whole segment is counted as detected.
-    anomaly_state = False
-    for i in range(len(gt)):
-        if gt[i] == 1 and pred[i] == 1 and not anomaly_state:
-            anomaly_state = True
-            for j in range(i, 0, -1):
-                if gt[j] == 0:
-                    break
-                if pred[j] == 0:
-                    pred[j] = 1
-            for j in range(i, len(gt)):
-                if gt[j] == 0:
-                    break
-                if pred[j] == 0:
-                    pred[j] = 1
-        elif gt[i] == 0:
-            anomaly_state = False
-        if anomaly_state:
-            pred[i] = 1
-    return gt, pred
-
-
 def run_anomaly(a, device):
     from data_loaders.data_puller import AnomalyDataPuller
-    from sklearn.metrics import precision_recall_fscore_support
+    import anomaly_metrics as am   # shared single-source metrics (SHARED_DIR on sys.path)
 
     a, cfg = effective_args(a, "anomaly_detection")
     if cfg:
@@ -582,15 +557,14 @@ def run_anomaly(a, device):
                  else train_energy)
     thresh = np.percentile(_thr_pool, 100 - a.anomaly_ratio)
     preds  = (scores > thresh).astype(int)
-    if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1":
-        labels, preds = _adjustment(labels, preds)
-    prec, rec, f1, _ = precision_recall_fscore_support(
-        labels, preds, average="binary", zero_division=0)
+    point_adjust = os.environ.get("TS_ANOMALY_ADJUST", "0") == "1"
+    m = am.compute_all(labels, preds, point_adjust=point_adjust)
     _thr = "combined" if os.environ.get("TS_ANOMALY_THRESH", "train") == "combined" else "train-only"
-    _adj = "point-adjusted" if os.environ.get("TS_ANOMALY_ADJUST", "0") == "1" else "raw"
-    print(f"  >> {a.model}  P={prec:.4f}  R={rec:.4f}  F1={f1:.4f}  "
+    _adj = "point-adjusted" if point_adjust else "raw"
+    print(f"  >> {a.model}  P={m['precision']:.4f}  R={m['recall']:.4f}  F1={m['f1']:.4f}  "
           f"(anomaly_ratio={a.anomaly_ratio}%, {_adj}, {_thr}-threshold)")
-    return {"precision": prec, "recall": rec, "f1": f1}
+    print(am.format_table(m, title=f"{a.model} / {a.dataset} Anomaly Detection"))
+    return m
 
 
 # ══════════════════════════════════════════════════════════════════════════════
