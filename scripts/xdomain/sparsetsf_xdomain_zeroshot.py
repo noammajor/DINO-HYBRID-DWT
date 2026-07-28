@@ -13,9 +13,43 @@ run inference on the TARGET test set with NO target adaptation. Same output
 format ("<src>-><tgt> pred_len=N MSE=.. MAE=.." + MEAN) so logs line up with the
 TimeMixer/FEDformer/TimesNet/TimeBase cross-domain runs.
 
-Usage
+How to run
+----------
+Run from the repo root (imports run_tslib_benchmark.py, tslib_xdomain_zeroshot,
+dataset_registry; loads models/SparseTSF-main/models/SparseTSF.py by path).
+
+  python scripts/xdomain/sparsetsf_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
+
+  # specific horizons, pinned GPU, output captured
+  CUDA_VISIBLE_DEVICES=2 python scripts/xdomain/sparsetsf_xdomain_zeroshot.py \
+      --source weather --target etth1 --pred_lens 96 336 --device cuda:0 \
+      > logs/sparsetsf_xdomain/weather_to_etth1.log 2>&1
+
+Flags
 -----
-  python scripts/sparsetsf_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
+  --source      (required) etth1 | etth2 | ettm1 | ettm2 | weather. Must be a key
+                in SP_CFG (drives period_len and LR). Model trained here.
+  --target      (required) etth1 | etth2 | ettm1 | ettm2 | weather. Zero-shot
+                evaluated here. If == --source, prints "nothing to do" and exits.
+  --device      auto | cuda:0 | cpu   (default: auto)
+  --pred_lens   one or more horizons  (default: 96 192 336 720); per-horizon result + mean.
+
+Output
+------
+  STDOUT only (no files written): a "[defaults from <source>]" header, per-horizon
+  "MSE=.. MAE=.." lines, and a MEAN line. Redirect to keep them.
+
+Notes
+-----
+  * Fixed knobs (module constants): SEQ_LEN 336, PATCH_LEN 16, MODEL_TYPE mlp,
+    D_MODEL 128, EPOCHS 30, PATIENCE 5, BATCH_SIZE 256. Per-source period_len/lr
+    come from SP_CFG; period_len must divide 336 and every pred_len.
+  * Cross-C: SparseTSF is channel-agnostic, so for differing source/target c_in it
+    rebuilds a target-sized model and copies every shape-matched weight
+    (strict=False). No target-side training. Loss is plain MSE.
+
+Usage:
+    python scripts/xdomain/sparsetsf_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
 """
 import argparse
 import importlib.util
@@ -28,7 +62,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B          # noqa: E402  (sets up data_loaders path)
 from tslib_xdomain_zeroshot import _loader  # noqa: E402  (generic csv/split loader)

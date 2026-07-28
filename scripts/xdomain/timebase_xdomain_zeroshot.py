@@ -12,9 +12,45 @@ run inference on the TARGET test set with NO target adaptation. Same output
 format ("<src>-><tgt> pred_len=N MSE=.. MAE=.." + MEAN) so logs line up with the
 TimeMixer/FEDformer/TimesNet cross-domain runs.
 
-Usage
+How to run
+----------
+Run from the repo root (imports run_tslib_benchmark.py, tslib_xdomain_zeroshot,
+dataset_registry; loads models/TimeBase-main/models/TimeBase.py by path).
+
+  python scripts/xdomain/timebase_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
+
+  # specific horizons, pinned GPU, output captured
+  CUDA_VISIBLE_DEVICES=2 python scripts/xdomain/timebase_xdomain_zeroshot.py \
+      --source ettm1 --target ettm2 --pred_lens 96 336 --device cuda:0 \
+      > logs/timebase_xdomain/ettm1_to_ettm2.log 2>&1
+
+Flags
 -----
-  python scripts/timebase_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
+  --source      (required) etth1 | etth2 | ettm1 | ettm2 | weather. Must be a key
+                in TB_CFG (drives period_len and basis_num). Model trained here.
+  --target      (required) etth1 | etth2 | ettm1 | ettm2 | weather. Zero-shot
+                evaluated here. If == --source, prints "nothing to do" and exits.
+  --device      auto | cuda:0 | cpu   (default: auto)
+  --pred_lens   one or more horizons  (default: 96 192 336 720); per-horizon result + mean.
+
+Output
+------
+  STDOUT only (no files written): a "[defaults from <source>]" header, per-horizon
+  "MSE=.. MAE=.." lines, and a MEAN line. Redirect to keep them.
+
+Notes
+-----
+  * Fixed knobs (module constants): SEQ_LEN 336, PATCH_LEN 16, ORTHO_WEIGHT 0.2,
+    LR 1e-2, EPOCHS 10, PATIENCE 5, BATCH_SIZE 64. Per-source period_len/basis_num
+    come from TB_CFG. Model built with use_period_norm=1, use_orthogonal=1, individual=0.
+  * Orthogonality: TimeBase returns (pred, ortho_loss); training loss is
+    MSE + 0.2*ortho. Validation/eval use MSE only.
+  * Cross-C: with individual=0 the basis linears are channel-shared, so for
+    differing source/target c_in it rebuilds a target-sized model and copies
+    shape-matched weights (strict=False). No target-side training.
+
+Usage:
+    python scripts/xdomain/timebase_xdomain_zeroshot.py --source etth1 --target etth2 --device cuda:0
 """
 import argparse
 import importlib.util
@@ -27,7 +63,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B          # noqa: E402  (sets up data_loaders path)
 from tslib_xdomain_zeroshot import _loader  # noqa: E402  (generic csv/split loader)

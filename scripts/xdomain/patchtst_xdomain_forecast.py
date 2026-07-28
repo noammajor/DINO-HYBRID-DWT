@@ -21,10 +21,54 @@ the in-domain supervised PatchTST baseline (logs/patchtst_sup/).
 All ETT datasets are 7-variable, so enc_in matches across any source/target pair.
 The SOURCE config drives the architecture and seq_len (used for both datasets).
 
-Usage
+How to run
+----------
+Run from the repo root (it imports run_tslib_benchmark.py, data_loaders, and
+dataset_registry, which resolve relative to the project root).
+
+  # basic: train on ETTh1, probe head on ETTh2, all 4 horizons
+  python scripts/xdomain/patchtst_xdomain_forecast.py --source etth1 --target etth2 --device cuda:0
+
+  # specific horizons + longer head training
+  python scripts/xdomain/patchtst_xdomain_forecast.py --source ettm1 --target etth1 \
+      --pred_lens 96 192 --head_epochs 30 --device cuda:0
+
+  # pin a physical GPU (device stays cuda:0 after isolation) and keep the output
+  CUDA_VISIBLE_DEVICES=2 python scripts/xdomain/patchtst_xdomain_forecast.py \
+      --source weather --target etth1 --device cuda:0 \
+      > logs/patchtst_xdomain/weather_to_etth1.log 2>&1
+
+Flags
 -----
-  python scripts/patchtst_xdomain_forecast.py --source etth1 --target etth2 --device cuda:0
-  # a full matrix is driven by the shell loop in the message that shipped this file.
+  --source      (required) source dataset key; drives the architecture, seq_len,
+                LR, and epoch defaults. The full model is trained here (Phase 1).
+  --target      (required) target dataset key; the head is re-trained and the
+                model is evaluated on its test split (Phase 2). If == --source,
+                the script prints "nothing to do" and exits.
+  --device      auto | cuda:0 | cpu   (default: auto; resolved via B.pick_device)
+  --pred_lens   one or more horizons  (default: 96 192 336 720); one source->target
+                run per horizon, plus a printed mean.
+  --head_epochs max epochs for the Phase-2 head-only probe on the target
+                (default: 20). Phase-1 source training uses the source's default
+                epoch count.
+
+Output
+------
+  Prints to STDOUT only (no files written): per-horizon lines
+    >> <src>-><tgt> pred_len=N MSE=.. MAE=..
+  followed by a MEAN line. Redirect to a log to keep the numbers.
+
+Notes
+-----
+  * enc_in / dec_in / c_out are set to the TARGET c_in. There is NO cross-C
+    weight copy here, so source and target must have the same channel count
+    (all ETT datasets are 7-variable, so ETT<->ETT pairs work). For differing
+    channel counts use tslib_xdomain_zeroshot.py (it handles cross-C).
+  * Loss is MSE; optimizer Adam at the source's default LR; early stopping uses
+    the source's default patience.
+
+Usage:
+    python scripts/xdomain/patchtst_xdomain_forecast.py --source etth1 --target etth2 --head_epochs 20 --device cuda:0
 """
 import argparse
 import sys
@@ -38,7 +82,7 @@ import torch.nn as nn
 
 # Import the benchmark module — it wires sys.path, chdir's into the TSLib dir,
 # and exposes effective_args / build_model_args / build_tslib_model / adapters.
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B  # noqa: E402  (has __main__ guard; safe to import)
 

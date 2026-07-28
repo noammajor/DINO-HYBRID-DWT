@@ -33,14 +33,14 @@ run_flow () {   # $1=flow(mae|ntp)  $2=gpu  $3=lr
   local flow=$1 gpu=$2 lr=$3 e name csv cin pl ckpt log
   for e in "${DATASETS[@]}"; do
     read -r name csv cin <<< "$e"
-    ckpt="$REPO/timemixer_$flow/checkpoints/$name/checkpoint_best.pth"
+    ckpt="$REPO/aux_tasks/timemixer_$flow/checkpoints/$name/checkpoint_best.pth"
     if [ ! -f "$ckpt" ]; then
       echo "[$flow|$name] no checkpoint ($ckpt) — skip"; continue
     fi
     for pl in $PRED_LENS; do
       log="$REPO/logs/timemixer_$flow/$name"; mkdir -p "$log"
       echo "[$flow|gpu$gpu|$name|$pl] forecast ($MODE)"
-      CUDA_VISIBLE_DEVICES=$gpu python "$REPO/timemixer_$flow/forecast.py" \
+      CUDA_VISIBLE_DEVICES=$gpu python "$REPO/aux_tasks/timemixer_$flow/forecast.py" \
         --init_ckpt "$ckpt" --mode "$MODE" \
         --data_path "$DATA_DIR/$csv" --c_in "$cin" --seq_len $SEQ_LEN --pred_len "$pl" \
         --lr "$lr" --epochs $FC_EPOCHS \

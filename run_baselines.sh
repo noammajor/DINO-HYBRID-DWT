@@ -55,7 +55,7 @@ TIMEBASE=(
 
 run_sparsetsf () {   # $1=seq_len  $2=gpu  $3=tag
   local seq=$1 gpu=$2 tag=$3 e name csv dk enc per lr pl log
-  cd "$REPO/SparseTSF-main" || exit 1
+  cd "$REPO/models/SparseTSF-main" || exit 1
   for e in "${SPARSE[@]}"; do
     read -r name csv dk enc per lr <<< "$e"
     for pl in $PRED_LENS; do
@@ -74,7 +74,7 @@ run_sparsetsf () {   # $1=seq_len  $2=gpu  $3=tag
 
 run_timebase () {    # $1=seq_len  $2=gpu  $3=tag
   local seq=$1 gpu=$2 tag=$3 e name csv dk enc pl per basis ow lr bs log
-  cd "$REPO/TimeBase-main" || exit 1
+  cd "$REPO/models/TimeBase-main" || exit 1
   for e in "${TIMEBASE[@]}"; do
     read -r name csv dk enc pl per basis ow lr bs <<< "$e"
     log="$REPO/logs/baselines/$tag/TimeBase/$name"; mkdir -p "$log"

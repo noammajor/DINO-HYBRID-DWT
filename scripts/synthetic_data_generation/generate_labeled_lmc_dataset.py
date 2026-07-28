@@ -19,6 +19,10 @@ sampling ranges (not fixed values).
 
 Memory: X for 1M samples is ~20 GB. Files are written via numpy memmap so
 the full dataset never lives in RAM at once. Standard np.load() works.
+
+Usage:
+    python scripts/synthetic_data_generation/generate_labeled_lmc_dataset.py -N 5000000 -C 10 -J 64 -O labeled_lmc_dataset
+    python scripts/synthetic_data_generation/generate_labeled_lmc_dataset.py --resume labeled_lmc_dataset   # continue a chunked run
 """
 
 import argparse

@@ -984,7 +984,7 @@ def run_patchtst(skip_train: bool = False, pretrain_dataset: str = None, forecas
                  batch_size: int = None):
     if pred_lens is None:
         pred_lens = [96, 192, 336, 720]
-    patchtst_dir = Path(__file__).parent / "PatchTST_self_supervised"
+    patchtst_dir = Path(__file__).parent / "models" / "PatchTST_self_supervised"
     shared_dir    = Path(__file__).parent / "shared"
     _add_path(shared_dir)
 
@@ -2039,7 +2039,7 @@ def run_jepa(skip_train: bool = False, pretrain_dataset: str = None,
                # PatchTSTForcastingAdapter does `from src.data.pred_dataset import …`;
                # its own path guess (JEPA/PatchTST_self_supervised) is wrong, so add the
                # repo-root copy explicitly.
-               str(root_dir / "PatchTST_self_supervised")):
+               str(root_dir / "models" / "PatchTST_self_supervised")):
         if _p not in _sys.path:
             _sys.path.insert(0, _p)
 

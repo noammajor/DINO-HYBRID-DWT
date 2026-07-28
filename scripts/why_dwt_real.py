@@ -22,6 +22,10 @@ Outputs (to vis/):
 Run on the server (data lives there):
   python scripts/why_dwt_real.py --dataset etth1 --gpu 0
   # options: --csv data/ETTh1.csv  --idx 500  --nwin 200
+
+Usage:
+    python scripts/why_dwt_real.py --source data --dataset etth1 --idx 500 --nwin 200 --gpu 0
+    python scripts/why_dwt_real.py --source synthetic --vision_mode gauss   # synthetic-signal variant
 """
 import argparse, os, sys, importlib.util
 from pathlib import Path
@@ -205,14 +209,12 @@ def main():
     ax[1].plot(t, sig(dwt_s), color=STU, lw=1.0, alpha=.85,
                label=f"student (dwt_hard ×{a.dwt_hard_scale:g})")
     ax[1].set_title("DWT (ours) — hard student, same period ✓", fontsize=10.5, color="#2ca02c")
-    ax[1].legend(fontsize=8)
     # right: crop teacher vs student
     vlab = "crop + contrast/jitter" if a.vision_mode == "contrast" else "crop + strong noise"
     ax[2].plot(t, sig(crop_t), color=TEA, lw=1.1, label="teacher (full + noise)")
     ax[2].plot(t, sig(crop_s), color=STU, lw=1.0, alpha=.85,
                label=f"student ({a.crop_ratio:g} {vlab})")
     ax[2].set_title("Vision-style — period & shape destroyed ✗", fontsize=10.5, color="#d62728")
-    ax[2].legend(fontsize=8)
     for axx in ax: axx.set_xlabel("time step")
 
     src_txt = ("generic periodic function" if a.source == "synthetic" else f"real {a.dataset}")
@@ -256,7 +258,6 @@ def main():
     ax[0].set_xlabel("student / teacher dominant-period ratio")
     ax[0].set_ylabel("#windows")
     ax[0].set_title(f"content preservation over {a.nwin} windows\n(1.0 = identical period)", fontsize=10.5)
-    ax[0].legend(fontsize=9)
     # band-wise perturbation
     xb = np.arange(len(band_names)); w = 0.38
     ax[1].bar(xb - w/2, band_dwt, w, color="#2ca02c", label="DWT")
@@ -264,7 +265,6 @@ def main():
     ax[1].set_xticks(xb); ax[1].set_xticklabels(band_names, fontsize=8)
     ax[1].set_ylabel("fraction of teacher–student energy")
     ax[1].set_title("where each augmentation injects its change\n(DWT spares the low-freq semantic band)", fontsize=10.5)
-    ax[1].legend(fontsize=9)
     fig.suptitle("DWT keeps the dominant period and confines perturbation to high-freq detail; crop+jitter does neither",
                  fontsize=12.5, y=0.98)
     out2 = os.path.join(a.outdir, "why_dwt_real_stats.png")

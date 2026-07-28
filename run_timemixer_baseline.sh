@@ -10,7 +10,7 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-TM="$REPO/TimeMixer-main"
+TM="$REPO/models/TimeMixer-main"
 # CSV root from the same source the rest of the repo uses (data_paths.py).
 DATA_DIR="${DATA_DIR:-$(cd "$REPO" && python -c "from data_paths import DATA_PATHS; print(DATA_PATHS['forecasting_data_dir'])")}"
 

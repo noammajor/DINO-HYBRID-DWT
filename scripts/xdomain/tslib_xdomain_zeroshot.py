@@ -18,11 +18,51 @@ rebuilt at the target's count with the shape-matched (channel-independent)
 weights copied over and the C-sized RevIN affine reinitialized.
 The SOURCE dataset drives the architecture + seq_len defaults (used for both).
 
-Usage
+How to run
+----------
+Run from the repo root (imports run_tslib_benchmark.py, data_loaders, dataset_registry).
+
+  python scripts/xdomain/tslib_xdomain_zeroshot.py --model DLinear      --source etth1 --target etth2 --device cuda:0
+  python scripts/xdomain/tslib_xdomain_zeroshot.py --model iTransformer --source ettm1 --target ettm2 --device cuda:0
+  python scripts/xdomain/tslib_xdomain_zeroshot.py --model TimeMixer    --source etth1 --target ettm1 --device cuda:0
+
+  # cross-variable-count transfer (only channel-independent models), pinned GPU, captured
+  CUDA_VISIBLE_DEVICES=2 python scripts/xdomain/tslib_xdomain_zeroshot.py --model iTransformer \
+      --source weather --target etth1 --device cuda:0 \
+      > logs/tslib_xdomain_zeroshot/weather_to_etth1.log 2>&1
+
+Flags
 -----
-  python scripts/tslib_xdomain_zeroshot.py --model DLinear     --source etth1 --target etth2 --device cuda:0
-  python scripts/tslib_xdomain_zeroshot.py --model iTransformer --source ettm1 --target ettm2 --device cuda:0
-  python scripts/tslib_xdomain_zeroshot.py --model TimeMixer    --source etth1 --target ettm1 --device cuda:0
+  --model       (required) any TSLib model name (DLinear | iTransformer | TimeMixer
+                | PatchTST | ...). Cross-variable-count transfer is only supported
+                for models in _CROSS_C_MODELS (PatchTST, DLinear, SparseTSF,
+                TimeMixer, iTransformer); other models skip mismatched-C pairs.
+  --source      (required) source dataset key; full model trained here.
+  --target      (required) target dataset key; only its TEST split is used
+                (zero-shot). If == --source, prints "nothing to do" and exits.
+  --device      auto | cuda:0 | cpu   (default: auto)
+  --pred_lens   one or more horizons  (default: 96 192 336 720); per-horizon result + mean.
+
+Output
+------
+  STDOUT only (no files written): per-epoch losses, cross-C copy stats, per-horizon
+  "MSE=.. MAE=.." lines, and a mean. Redirect to keep them.
+
+Notes
+-----
+  * Cross-C: differing source/target c_in with an unsupported model is [skip]ped.
+    For supported models it trains at the source C, rebuilds at the target C, copies
+    shape-matched (channel-independent) weights, and reinitialises the RevIN affine.
+  * TimeMixer: down_sampling_layers=3 / window=2 / method=avg are injected (the
+    generic builder leaves 0, which raises an IndexError).
+  * LIBRARY: this module is imported by sparsetsf_xdomain_zeroshot.py and
+    timebase_xdomain_zeroshot.py — it exports run_pair(model, source, target,
+    device, pred_lens) plus _base_args/_loader/_make_forward/_train/_evaluate and
+    _CROSS_C_MODELS. Do not delete it.
+
+Usage:
+    python scripts/xdomain/tslib_xdomain_zeroshot.py --model DLinear --source etth1 --target etth2
+    python scripts/xdomain/tslib_xdomain_zeroshot.py --model iTransformer --source weather --target electricity --device cuda:0
 """
 import argparse
 import sys
@@ -34,7 +74,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B  # noqa: E402  (has __main__ guard; safe to import)
 

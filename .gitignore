@@ -44,3 +44,12 @@ vis/
 # ignore ALL generated PNGs anywhere in the repo
 *.png
 vis/aug_log.txt
+
+# checkpoints & artifacts (kept on server, not in repo)
+checkpoints*/
+anomaly/
+pulled_ckpts/
+Models/
+Visuals*/
+vis/
+*.pyc

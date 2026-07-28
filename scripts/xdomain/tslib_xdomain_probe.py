@@ -16,11 +16,48 @@ Reuses run_tslib_benchmark.py for loaders, model classes, and per-dataset defaul
 hyperparameters (via effective_args). All ETT datasets are 7-variable, so enc_in
 matches across any source/target pair; the SOURCE config drives architecture+seq_len.
 
-Usage
+How to run
+----------
+Run from the repo root (imports run_tslib_benchmark.py, data_loaders, dataset_registry).
+
+  python scripts/xdomain/tslib_xdomain_probe.py --model iTransformer --source etth1 --target etth2 --device cuda:0
+  python scripts/xdomain/tslib_xdomain_probe.py --model TimeMixer    --source ettm1 --target ettm2 --device cuda:0
+  python scripts/xdomain/tslib_xdomain_probe.py --model PatchTST     --source etth1 --target ettm1 --device cuda:0
+
+  # specific horizons + longer head probe, pinned GPU, output captured
+  CUDA_VISIBLE_DEVICES=2 python scripts/xdomain/tslib_xdomain_probe.py --model PatchTST \
+      --source etth1 --target ettm1 --pred_lens 96 336 --head_epochs 30 --device cuda:0 \
+      > logs/tslib_xdomain_probe/etth1_to_ettm1.log 2>&1
+
+Flags
 -----
-  python scripts/tslib_xdomain_probe.py --model iTransformer --source etth1 --target etth2 --device cuda:0
-  python scripts/tslib_xdomain_probe.py --model TimeMixer    --source ettm1 --target ettm2 --device cuda:0
-  python scripts/tslib_xdomain_probe.py --model PatchTST     --source etth1 --target ettm1 --device cuda:0
+  --model       (required) PatchTST | TimeMixer | iTransformer. Selects which
+                top-level modules count as the trainable "head" (HEAD_PREFIXES:
+                PatchTST->head, iTransformer->projection,
+                TimeMixer->predict_layers/projection_layer/out_res_layers/regression_layers).
+  --source      (required) source dataset key; full model trained here (Phase 1).
+  --target      (required) target dataset key; head re-trained + evaluated here
+                (Phase 2). If == --source, prints "nothing to do" and exits.
+  --device      auto | cuda:0 | cpu   (default: auto)
+  --pred_lens   one or more horizons  (default: 96 192 336 720); per-horizon result + mean.
+  --head_epochs max epochs for the Phase-2 head-only probe on the target
+                (default: 20). Phase-1 uses the source's default epoch count.
+
+Output
+------
+  STDOUT only (no files written): per-epoch train/val loss, head param counts,
+  per-horizon "MSE=.. MAE=.." lines, and a final mean. Redirect to keep them.
+
+Notes
+-----
+  * NO cross-C handling — assumes source/target have the same channel count
+    (all ETT datasets are 7-variable). For differing channel counts use
+    tslib_xdomain_zeroshot.py (it rebuilds + copies channel-independent weights).
+  * Loss MSE; optimizer Adam at the source's default LR; early-stop patience from
+    the source's defaults.
+
+Usage:
+    python scripts/xdomain/tslib_xdomain_probe.py --model PatchTST --source etth1 --target etth2 --head_epochs 20
 """
 import argparse
 import sys
@@ -32,7 +69,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 import run_tslib_benchmark as B  # noqa: E402  (has __main__ guard; safe to import)
 

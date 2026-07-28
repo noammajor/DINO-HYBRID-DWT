@@ -1,3 +1,7 @@
+# Usage:
+#   python scripts/synthetic_data_generation/kernel-synth.py -N 100000 -J 8 -O kernel_synth.arrow
+#   (-N series, -L length[2500], -P max kernels[4], -J jobs, -O out, -D out-dir)
+
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 

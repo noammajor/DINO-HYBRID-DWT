@@ -764,7 +764,7 @@ def test_run(args):
 
     # ── PatchTST-identical data loading ──────────────────────────────────────
     _SEQ_LEN = 336   # 21 patches × 16 = matches the 336 pretraining context
-    _patchtst_dir = str(Path(__file__).parent.parent / "PatchTST_self_supervised")
+    _patchtst_dir = str(Path(__file__).parent.parent.parent / "models" / "PatchTST_self_supervised")
     if _patchtst_dir not in sys.path:
         sys.path.insert(0, _patchtst_dir)
     from src.data.pred_dataset import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom

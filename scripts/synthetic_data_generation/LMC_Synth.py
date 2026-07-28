@@ -1,3 +1,7 @@
+# Usage:
+#   python scripts/synthetic_data_generation/LMC_Synth.py -N 4000 -C 160 -J 8 -O LMC_synth_MTS.arrow
+#   (multivariate LMC generator: -N series, -C channels[160], -L length[2500], -P latent GPs[4])
+
 # This method builds upon the kernel-synth method introduced by the authors of Chronos.
 # We adapted the synthetic data generation process to accommodate multivariate cases using the Linear Coregionalization Model.
 # This approach utilizes kernel-synth to generate latent variates. The original license is as follows:

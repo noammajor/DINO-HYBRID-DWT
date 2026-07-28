@@ -13,6 +13,9 @@ The burst (a transient at time t0, frequency f0) is the semantic "identity".
             hard = perturb detail bands    -> keeps approximation, atom survives at the
                                               SAME time & frequency.
   => DWT's two views share the atom (useful invariant); crop+jitter's do not.
+
+Usage:
+    python scripts/why_dwt.py                     # writes the didactic figure to vis/
 """
 import numpy as np, pywt
 import matplotlib

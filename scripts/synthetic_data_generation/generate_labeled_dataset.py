@@ -14,6 +14,9 @@ Y label layout (1 + 2*max_kernels - 1 columns):
   [1 .. K]          kernel_id_0..K-1 (int 0–32, padded with -1 if unused)
   [K+1 .. 2K-1]    operator_0..K-2  (int 0=+, 1=*, padded with -1 if unused)
 where K = max_kernels.
+
+Usage:
+    python scripts/synthetic_data_generation/generate_labeled_dataset.py -N 10000 -O <out_dir> --seed 42
 """
 
 import argparse

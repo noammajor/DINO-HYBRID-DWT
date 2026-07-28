@@ -61,7 +61,7 @@ def _find_src_checkpoint(model: str, dataset: str, layers: int, out_dim: int = N
         return ROOT / f"{_base}_{dataset}_layers{layers}{_outdim_tag}{_ckpt_tag}" / "checkpoint_best.pth"
 
     elif model == "patchtst":
-        save_dir = (ROOT / "PatchTST_self_supervised" / "saved_models" /
+        save_dir = (ROOT / "models" / "PatchTST_self_supervised" / "saved_models" /
                     dataset / "masked_patchtst" / "based_model" / f"layers{layers}")
         candidates = [p for p in save_dir.glob("*.pth") if "_epoch" not in p.name]
         return candidates[0] if candidates else save_dir / "checkpoint_best.pth"

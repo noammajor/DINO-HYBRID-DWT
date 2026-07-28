@@ -93,11 +93,15 @@ Some forecast-time knobs are environment variables:
 
 ## Config
 
-Each model is a single Python `config = {...}` dict, loaded by
-[Train_and_downstream.py](Train_and_downstream.py), merged with
-[data_paths.py](data_paths.py), and converted into runner arguments. Editing the
-dict is the primary way to change behavior; CLI flags override a well-defined
-subset at runtime.
+**Change behavior through the CLI flags — that is the intended, primary
+interface** (see [Quickstart](#quickstart) and the
+[augmentation / ablation flags](#augmentation--ablation-flags) above). Each model
+also ships a Python `config = {...}` dict that supplies the *defaults*, loaded by
+[Train_and_downstream.py](Train_and_downstream.py) and merged with
+[data_paths.py](data_paths.py); **any CLI flag overrides the matching config
+value at runtime.** Edit the config dict only for the handful of defaults that
+aren't exposed as flags. For reproducibility, prefer passing flags (plus
+`--ckpt_tag` to keep runs separate) over hand-editing configs between runs.
 
 | Model (backbone) | Config file |
 |------------------|-------------|
@@ -113,7 +117,13 @@ corpus and the downstream sets: `monash_data_dir`, `synthetic_data_dir`,
 `synthetic_mix_data_dir`, `forecasting_data_dir`, `classification_data_dir`,
 `anomaly_data_dir`. Edit it once per machine.
 
-### Keys you'll most often change ([tsdino_timemixer/config.py](tsdino_timemixer/config.py))
+### Defaults reference ([tsdino_timemixer/config.py](tsdino_timemixer/config.py))
+
+The config keys below hold the defaults; **most have a CLI flag that overrides
+them at runtime — prefer the flag** (e.g. `--encoder_layers`, `--out_dim`,
+`--lr`, `--epochs`, `--aug_global/--aug_local`, `--dwt_wavelet_pool`,
+`--wavelet_sampling_mode`, `--view_pairing`, `--mlm_phi`, `--lr_forecasting`).
+Only edit the config for a default with no corresponding flag.
 
 - **Architecture** — `encoder_layers`, `out_dim`, `tsmixer_d_model`, `d_ff`,
   `n_heads`, `patch_len`, `num_patches` (context = `num_patches × patch_len`;

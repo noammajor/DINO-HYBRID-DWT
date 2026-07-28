@@ -44,7 +44,7 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
   if [ "$flow" = mae ]; then lr=$MAE_LR; else lr=$NTP_LR; fi
   for entry in "${DATASETS[@]}"; do
     read -r name csv cin <<< "$entry"
-    out="$REPO/timemixer_$flow/checkpoints/$name"
+    out="$REPO/aux_tasks/timemixer_$flow/checkpoints/$name"
     log="$REPO/logs/timemixer_$flow/$name"; mkdir -p "$log"
 
     if [ "$flow" = mae ]; then
@@ -54,7 +54,7 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
     fi
 
     echo "[$flow|gpu$gpu|$name] pretrain (lr=$lr) -> $log/pretrain.log"
-    CUDA_VISIBLE_DEVICES=$gpu python "$REPO/timemixer_$flow/train.py" \
+    CUDA_VISIBLE_DEVICES=$gpu python "$REPO/aux_tasks/timemixer_$flow/train.py" \
       --data_path "$DATA_DIR/$csv" --c_in "$cin" --seq_len $SEQ_LEN $task_args \
       --lr $lr --epochs $PRE_EPOCHS --output_dir "$out" \
       --d_model $D_MODEL --d_ff $D_FF --e_layers $E_LAYERS \
@@ -62,7 +62,7 @@ run_flow () {   # $1 = flow (mae|ntp)   $2 = gpu id
       > "$log/pretrain.log" 2>&1
 
     echo "[$flow|gpu$gpu|$name] forecast ($MODE) -> $log/forecast.log"
-    CUDA_VISIBLE_DEVICES=$gpu python "$REPO/timemixer_$flow/forecast.py" \
+    CUDA_VISIBLE_DEVICES=$gpu python "$REPO/aux_tasks/timemixer_$flow/forecast.py" \
       --init_ckpt "$out/checkpoint_best.pth" --mode $MODE \
       --data_path "$DATA_DIR/$csv" --c_in "$cin" --seq_len $SEQ_LEN --pred_len $PRED_LEN \
       --lr $lr --epochs $FC_EPOCHS \

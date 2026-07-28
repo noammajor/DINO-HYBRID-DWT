@@ -65,7 +65,7 @@ config = {
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     "optimizer": "adamw",           # "adamw" | "sgd"
-    "lr": 1e-4,                     # halved (peak ~5e-5 after batch scaling) — collapse fired exactly when LR hit its peak
+    "lr": 5e-4,                     # base LR; linearly scaled by (B*N_gpu)/256 (paper default)
     "min_lr": 1e-6,
     "warmup_epochs": 3,
     "weight_decay": 0.04,
@@ -75,7 +75,7 @@ config = {
     "freeze_last_layer": 1,
 
     # ── DINO pretraining ──────────────────────────────────────────────────────
-    "epochs": 150,
+    "epochs": 80,
 
     # ── DWT defaults (shared across all dwt_* aug types) ─────────────────────
     #
@@ -95,7 +95,7 @@ config = {
     # Random wavelet pool: one wavelet is drawn per sample. Set to None to use dwt_wavelet deterministically.
     # sym* = near-linear phase (less distortion); db* = slight phase distortion (harder student view).
     # Pools to try:  sym-only ['sym4','sym6','sym8'] | mixed ['sym4','sym6','db4','db6'] | None (fixed)
-    "dwt_wavelet_pool":             ['sym4', 'sym6', 'sym8', 'db4', 'db6'],  # random per sample: sym* (low phase distortion) + db* (higher phase distortion)
+    "dwt_wavelet_pool":             ['sym4', 'sym6', 'sym8', 'db4', 'db6', 'coif2'],  # random per sample: sym*/db*/coif2 (paper pool P)
     # Wavelet-basis sampling mode (ablation): how the easy/hard views pick their basis.
     #   'independent' (default) — each view draws its own basis from dwt_wavelet_pool.
     #   'shared'                — one basis drawn per sample, shared by both views.
@@ -212,7 +212,7 @@ config = {
     # Teacher encoder sees full input    → reconstruction head.
     # Loss: MSE between the two reconstructions at masked positions.
     "use_reconstruction": False,   # set True to enable
-    "mlm_phi":        0.75,        # phi*DINO + (1-phi)*MLM  (0 = MLM disabled; 0<phi<1 blends both heads)
+    "mlm_phi":        0.0,         # phi*DINO + (1-phi)*MLM  (0 = pure DINO, paper default; 0<phi<1 blends both heads)
     "mlm_mode":       "ibot",      # "ibot" = teacher-guided CE | "mae" = MSE vs ground truth
     "ibot_out_dim":   1024,        # iBOT patch head output dim — kept at out_dim for TSMixer (65536 OOMs with timestep tokens)
     "mlm_mask_ratio": 0.4,         # fraction of patches to mask for MLM

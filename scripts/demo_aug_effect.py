@@ -4,6 +4,9 @@
 Mirrors tsdino_timemixer/data_agumentation.py: pywt.wavedec(level=3), then
  - low_pass:       zero ALL detail coeffs, keep approximation
  - soft_threshold: sign(c)*max(|c|-sigma*max|c|,0) on each detail level
+
+Usage:
+    python scripts/demo_aug_effect.py            # writes a demo figure to vis/
 """
 import numpy as np, pywt
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt

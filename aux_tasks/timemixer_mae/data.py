@@ -7,11 +7,11 @@ no targets (the masked input is its own target).
 import os
 import sys
 
-_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 def _ds_cls(fname):
-    patchtst = os.path.join(_REPO_ROOT, "PatchTST_self_supervised")
+    patchtst = os.path.join(_REPO_ROOT, "models", "PatchTST_self_supervised")
     if patchtst not in sys.path:
         sys.path.insert(0, patchtst)
     from src.data.pred_dataset import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom

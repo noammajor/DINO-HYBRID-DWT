@@ -5,12 +5,15 @@ using the ACTUAL DWTAugmentation class + tsdino_timemixer/config.py parameters.
 Self-contained: subsamples synthetic .arrow series + reads the ETTh1 CSV
 directly, then runs each through the real augmentation for the db wavelets we
 use (db4/db6/db8). Run on the server.
+
+Usage:
+    python scripts/demo_aug_real.py              # run on the server (reads synthetic .arrow + ETTh1 CSV)
 """
 import os, sys, numpy as np, importlib.util as ilu
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 import torch
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "wino", "tsdino_timemixer"))
 from data_paths import DATA_PATHS
