@@ -113,9 +113,18 @@ aren't exposed as flags. For reproducibility, prefer passing flags (plus
 ### Shared data paths
 
 [data_paths.py](data_paths.py) holds the absolute locations of the pre-training
-corpus and the downstream sets: `monash_data_dir`, `synthetic_data_dir`,
-`synthetic_mix_data_dir`, `forecasting_data_dir`, `classification_data_dir`,
-`anomaly_data_dir`. Edit it once per machine.
+corpus and the downstream sets. **Every entry ships as an `"ADD HERE"`
+placeholder — set each to the absolute path on your machine before running**
+(one-time). What each key points to:
+
+| Key | Contents |
+|-----|----------|
+| `monash_data_dir` | Monash pre-training corpus |
+| `synthetic_data_dir` | synthetic `.arrow` pre-training files |
+| `synthetic_mix_data_dir` | smaller curated synthetic mix |
+| `forecasting_data_dir` | forecasting CSVs (ETT, weather, electricity, …) |
+| `classification_data_dir` | UEA classification datasets |
+| `anomaly_data_dir` | anomaly datasets (SMD/MSL/SMAP/PSM/SWaT) |
 
 ### Defaults reference ([tsdino_timemixer/config.py](tsdino_timemixer/config.py))
 

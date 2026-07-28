@@ -1,19 +1,20 @@
 """
 Centralised data paths shared across all models.
 
-Edit values here when running on a different machine. Per-model configs may
-override individual keys if a particular model needs a different location.
+Set each "ADD HERE" placeholder below to the absolute path on YOUR machine
+(one-time per machine) — see the "Data paths" section of the README for what
+each key should point to. Per-model configs may override individual keys.
 """
 
 DATA_PATHS = {
     # ── Pretraining ──────────────────────────────────────────────────────────
-    "monash_data_dir":         "/home/shared/datasets/Monash",
+    "monash_data_dir":         "ADD HERE",   # Monash pretraining corpus
     "monash_min_len":          512,
-    "synthetic_data_dir":      "/home/shared/datasets/synthetic_data_TS_NEW",  # .arrow files
-    "synthetic_mix_data_dir":  "/home/shared/datasets/synthetic_TS_Mix",      # smaller curated mix
+    "synthetic_data_dir":      "ADD HERE",   # synthetic .arrow files
+    "synthetic_mix_data_dir":  "ADD HERE",   # smaller curated synthetic mix
     # ── Forecasting CSVs (consumed by dataset_registry) ──────────────────────
-    "forecasting_data_dir":    "/home/shared/datasets/data - forecasting timeseries",
+    "forecasting_data_dir":    "ADD HERE",   # forecasting CSV directory
     # ── Downstream task datasets ─────────────────────────────────────────────
-    "classification_data_dir": "/home/shared/datasets/Classification_TS",
-    "anomaly_data_dir":        "/home/shared/datasets/Anomaly_TS",
+    "classification_data_dir": "ADD HERE",   # UEA classification datasets
+    "anomaly_data_dir":        "ADD HERE",   # anomaly datasets (SMD/MSL/SMAP/PSM/SWaT)
 }

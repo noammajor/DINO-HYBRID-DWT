@@ -17,7 +17,9 @@ The burst (a transient at time t0, frequency f0) is the semantic "identity".
 Usage:
     python scripts/why_dwt.py                     # writes the didactic figure to vis/
 """
-import numpy as np, pywt
+import os, numpy as np, pywt
+
+_VIS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vis")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -100,7 +102,7 @@ fig.suptitle("A localized burst (the identity): DWT keeps it in both views, crop
 fig.text(0.5, 0.905, "shaded = where the burst lives.  crop excises it from the student view; "
          "jitter buries it; DWT (soft-threshold + detail-perturb) preserves the atom in place.",
          ha="center", fontsize=9.5, color="0.3")
-out1 = "/Users/noammajor/Desktop/DINO-HYBRID-DWT/vis/why_dwt_time.png"
+out1 = os.path.join(_VIS, "why_dwt_time.png")
 fig.savefig(out1, dpi=150, bbox_inches="tight"); plt.close(fig)
 
 # ─────────────────────── figure 2: time-frequency scalograms ────────────────
@@ -131,7 +133,7 @@ fig.suptitle("Time–frequency view: the burst is a compact atom — preserved b
 fig.text(0.5, 0.905, "DWT keeps the bright atom fixed in time & scale across easy/hard; "
          "crop shifts/erases it (the student panel is blank where the atom should be).",
          ha="center", fontsize=9.5, color="0.3")
-out2 = "/Users/noammajor/Desktop/DINO-HYBRID-DWT/vis/why_dwt_tf.png"
+out2 = os.path.join(_VIS, "why_dwt_tf.png")
 fig.savefig(out2, dpi=150, bbox_inches="tight"); plt.close(fig)
 
 print("saved", out1); print("saved", out2)

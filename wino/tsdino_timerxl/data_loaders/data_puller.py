@@ -805,7 +805,7 @@ class ClassificationDataPuller(Dataset):
 
     Args:
         data_dir      : root directory containing dataset sub-folders
-                        (e.g. "/home/shared/datasets/Classification_TS")
+                        (e.g. "/path/to/Classification_TS")
         dataset_names : str or list of str — dataset sub-folder names
         patch_size    : patch length; seq_len is zero-padded to a multiple of this
         which         : "train" | "val" | "test"

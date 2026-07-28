@@ -10,7 +10,7 @@
 set -u
 GPU=${1:?usage: run_timerxl_indomain_grid.sh <GPU> <dataset>...}; shift
 DATASETS="$@"
-R=/home/eng/majorno/DINO-HYBRID-DWT
+R="$(cd "$(dirname "$0")/.." && pwd)"   # repo root (this script lives in scripts/)
 cd "$R"
 
 COMMON="--model dino_timerxl --pretrain_only true \

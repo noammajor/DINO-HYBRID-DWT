@@ -169,7 +169,7 @@ def main():
 
     print(f"\nDone. Standardised data in: {args.out_dir}/")
     print("Upload with:")
-    print(f"  rsync -av {args.out_dir}/ majorno@<server>:/home/shared/datasets/Anomaly_TS/")
+    print(f"  rsync -av {args.out_dir}/ <user>@<server>:<anomaly_data_dir>/")
 
 
 if __name__ == "__main__":
